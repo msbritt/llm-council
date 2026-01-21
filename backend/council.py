@@ -1,21 +1,362 @@
-"""3-stage LLM Council orchestration."""
+"""3-stage LLM Council orchestration with optional Stage 0 clarification."""
 
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 from .openrouter import query_models_parallel, query_model
 from .config import COUNCIL_MODELS, CHAIRMAN_MODEL
+import re
 
 
-async def stage1_collect_responses(user_query: str) -> List[Dict[str, Any]]:
+# ============================================================================
+# Stage 0: Clarification Round
+# ============================================================================
+
+async def stage0_collect_questions(user_query: str) -> List[Dict[str, Any]]:
     """
-    Stage 1: Collect individual responses from all council models.
+    Stage 0: Ask each council model what clarifying questions it needs.
 
     Args:
         user_query: The user's question
 
     Returns:
+        List of dicts with 'model', 'raw_response', and 'questions' keys
+    """
+    clarification_prompt = f"""You are part of an LLM Council that will answer the following question:
+
+Question: {user_query}
+
+Before the council provides a response, you have an opportunity to ask clarifying questions that would help you provide a better answer.
+
+Your task:
+1. Identify up to 3 clarifying questions that would significantly improve your response
+2. For each question, determine if it requires USER input or can be answered via RESEARCH (web search)
+
+Strategic guidelines:
+- Focus on information gaps that could change your answer substantially
+- Don't ask about things already clear from the question
+- Prioritize questions that address ambiguity, missing context, or assumptions
+- Consider: What would you need to know to give the most accurate, relevant answer?
+
+Format your response EXACTLY as follows:
+
+QUESTIONS:
+1. [USER] What is your specific use case or context?
+2. [RESEARCH] What is the current market size for X?
+3. [USER] What are your constraints or requirements?
+
+Important:
+- Use [USER] for questions that need human input (preferences, context, constraints, personal situations)
+- Use [RESEARCH] for questions that can be answered by searching the web (current facts, recent data, documentation, news)
+- Ask only questions that would meaningfully impact your answer quality
+- Avoid redundant questions that restate what's already in the original query
+- If no clarifying questions are needed, respond with "QUESTIONS: None needed"
+- Maximum 3 questions
+
+Provide your questions now:"""
+
+    messages = [{"role": "user", "content": clarification_prompt}]
+
+    # Query all models in parallel
+    responses = await query_models_parallel(COUNCIL_MODELS, messages)
+
+    # Format results and parse questions
+    stage0_results = []
+    for model, response in responses.items():
+        if response is not None:
+            raw_response = response.get('content', '')
+            questions = stage0_parse_questions(raw_response)
+            stage0_results.append({
+                "model": model,
+                "raw_response": raw_response,
+                "questions": questions
+            })
+
+    return stage0_results
+
+
+def stage0_parse_questions(response_text: str) -> List[Dict[str, str]]:
+    """
+    Parse questions from a model's Stage 0 response.
+
+    Args:
+        response_text: The model's raw response
+
+    Returns:
+        List of dicts with 'type' (USER/RESEARCH) and 'question' keys
+    """
+    questions = []
+
+    # Look for QUESTIONS: section
+    if "QUESTIONS:" not in response_text:
+        return questions
+
+    # Extract everything after "QUESTIONS:"
+    parts = response_text.split("QUESTIONS:")
+    if len(parts) < 2:
+        return questions
+
+    questions_section = parts[1]
+
+    # Check for "None needed" case
+    if "none needed" in questions_section.lower():
+        return questions
+
+    # Parse each line looking for [USER] or [RESEARCH] tags
+    lines = questions_section.split('\n')
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        # Look for [USER] or [RESEARCH] tags
+        user_match = re.search(r'\[USER\]\s*(.+)', line, re.IGNORECASE)
+        research_match = re.search(r'\[RESEARCH\]\s*(.+)', line, re.IGNORECASE)
+
+        if user_match:
+            question_text = user_match.group(1).strip()
+            # Remove leading number and period if present
+            question_text = re.sub(r'^\d+\.\s*', '', question_text)
+            questions.append({
+                "type": "USER",
+                "question": question_text
+            })
+        elif research_match:
+            question_text = research_match.group(1).strip()
+            # Remove leading number and period if present
+            question_text = re.sub(r'^\d+\.\s*', '', question_text)
+            questions.append({
+                "type": "RESEARCH",
+                "question": question_text
+            })
+
+    return questions
+
+
+async def stage0_chairman_aggregate(
+    user_query: str,
+    stage0_results: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    Stage 0: Chairman reviews all questions and creates consolidated list.
+
+    Args:
+        user_query: The original user query
+        stage0_results: Questions collected from all models
+
+    Returns:
+        Dict with 'user_questions' and 'research_queries' lists
+    """
+    # Collect all questions from models
+    all_questions = []
+    for result in stage0_results:
+        model = result['model']
+        for q in result.get('questions', []):
+            all_questions.append({
+                "model": model,
+                "type": q['type'],
+                "question": q['question']
+            })
+
+    # If no questions were asked, return empty lists
+    if not all_questions:
+        return {
+            "user_questions": [],
+            "research_queries": []
+        }
+
+    # Format questions for chairman
+    questions_text = "\n".join([
+        f"- [{q['type']}] {q['question']} (from {q['model']})"
+        for q in all_questions
+    ])
+
+    chairman_prompt = f"""You are the Chairman of an LLM Council. The council members have reviewed this question:
+
+Question: {user_query}
+
+Each council member has identified clarifying questions they need answered. Here are all their questions:
+
+{questions_text}
+
+Your task is to create a consolidated question list for the user that:
+1. Represents every distinct information need identified by the council members
+2. Combines similar or overlapping questions into single, well-crafted questions
+3. Rewords questions to be clear and easy for the user to understand
+4. Ensures no council member's concern is left unaddressed
+5. Stays within 8 questions maximum (use fewer when possible)
+6. Prioritizes questions that would most improve the council's ability to help
+
+When consolidating:
+- If 3 models ask about "budget", "cost constraints", and "price range" → merge into one question about budget parameters
+- If questions differ only slightly, create one question that covers all variations
+- Keep each consolidated question focused on a single topic
+- Maintain the [USER] and [RESEARCH] categorization
+
+Format your response EXACTLY as follows:
+
+USER_QUESTIONS:
+1. Question text here
+2. Another question here
+
+RESEARCH_QUERIES:
+1. Query text here
+2. Another query here
+
+Important:
+- Use USER_QUESTIONS for questions requiring human input
+- Use RESEARCH_QUERIES for questions that can be answered via web search
+- If a category has no questions, write "None"
+- Maximum 8 total questions combined
+- Be selective - only include questions that truly matter
+
+Provide your consolidated questions now:"""
+
+    messages = [{"role": "user", "content": chairman_prompt}]
+
+    # Query the chairman model
+    response = await query_model(CHAIRMAN_MODEL, messages)
+
+    if response is None:
+        # Fallback: return empty lists if chairman fails
+        return {
+            "user_questions": [],
+            "research_queries": []
+        }
+
+    # Parse the chairman's response
+    return stage0_parse_aggregated(response.get('content', ''))
+
+
+def stage0_parse_aggregated(response_text: str) -> Dict[str, Any]:
+    """
+    Parse the chairman's aggregated questions response.
+
+    Args:
+        response_text: The chairman's response
+
+    Returns:
+        Dict with 'user_questions' and 'research_queries' lists
+    """
+    result = {
+        "user_questions": [],
+        "research_queries": []
+    }
+
+    # Extract USER_QUESTIONS section
+    if "USER_QUESTIONS:" in response_text:
+        parts = response_text.split("USER_QUESTIONS:")
+        if len(parts) >= 2:
+            # Find where this section ends (either at RESEARCH_QUERIES or end of text)
+            user_section = parts[1]
+            if "RESEARCH_QUERIES:" in user_section:
+                user_section = user_section.split("RESEARCH_QUERIES:")[0]
+
+            # Parse numbered list
+            lines = user_section.split('\n')
+            for line in lines:
+                line = line.strip()
+                if not line or line.lower() == "none":
+                    continue
+                # Remove leading number and period
+                question = re.sub(r'^\d+\.\s*', '', line)
+                if question and len(question) > 3:  # Avoid very short/invalid entries
+                    result["user_questions"].append({
+                        "id": f"q{len(result['user_questions']) + 1}",
+                        "question": question
+                    })
+
+    # Extract RESEARCH_QUERIES section
+    if "RESEARCH_QUERIES:" in response_text:
+        parts = response_text.split("RESEARCH_QUERIES:")
+        if len(parts) >= 2:
+            research_section = parts[1]
+
+            # Parse numbered list
+            lines = research_section.split('\n')
+            for line in lines:
+                line = line.strip()
+                if not line or line.lower() == "none":
+                    continue
+                # Remove leading number and period
+                query = re.sub(r'^\d+\.\s*', '', line)
+                if query and len(query) > 3:  # Avoid very short/invalid entries
+                    result["research_queries"].append({
+                        "id": f"r{len(result['research_queries']) + 1}",
+                        "query": query
+                    })
+
+    return result
+
+
+def build_enriched_context(
+    user_query: str,
+    user_answers: Optional[Dict[str, str]] = None,
+    research_results: Optional[Dict[str, str]] = None,
+    user_questions: Optional[List[Dict[str, str]]] = None
+) -> str:
+    """
+    Build enriched context from clarification responses.
+
+    Args:
+        user_query: The original query
+        user_answers: Dict mapping question IDs to user's answers
+        research_results: Dict mapping query IDs to research results
+        user_questions: List of question dicts with 'id' and 'question'
+
+    Returns:
+        Formatted context string to prepend to the query
+    """
+    context_parts = []
+
+    # Add user answers if provided
+    if user_answers:
+        context_parts.append("CLARIFYING INFORMATION:")
+
+        # Build a lookup of question ID to question text
+        question_lookup = {}
+        if user_questions:
+            for q in user_questions:
+                question_lookup[q['id']] = q['question']
+
+        for question_id, answer in user_answers.items():
+            question_text = question_lookup.get(question_id, "Clarification")
+            context_parts.append(f"\nQ: {question_text}\nA: {answer}")
+
+    # Add research results if provided
+    if research_results:
+        if not context_parts:
+            context_parts.append("BACKGROUND RESEARCH:")
+        else:
+            context_parts.append("\n\nBACKGROUND RESEARCH:")
+
+        for query_id, result in research_results.items():
+            context_parts.append(f"\n{result}")
+
+    # Combine with original query
+    if context_parts:
+        enriched = "\n".join(context_parts)
+        return f"{enriched}\n\n---\n\nOriginal Question: {user_query}"
+
+    return user_query
+
+
+# ============================================================================
+# Stage 1: Individual Responses
+# ============================================================================
+
+async def stage1_collect_responses(user_query: str, enriched_context: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Stage 1: Collect individual responses from all council models.
+
+    Args:
+        user_query: The user's question
+        enriched_context: Optional enriched context from Stage 0 clarifications
+
+    Returns:
         List of dicts with 'model' and 'response' keys
     """
-    messages = [{"role": "user", "content": user_query}]
+    # Use enriched context if provided, otherwise use original query
+    query_text = enriched_context if enriched_context else user_query
+    messages = [{"role": "user", "content": query_text}]
 
     # Query all models in parallel
     responses = await query_models_parallel(COUNCIL_MODELS, messages)
@@ -70,8 +411,16 @@ Here are the responses from different models (anonymized):
 {responses_text}
 
 Your task:
-1. First, evaluate each response individually. For each response, explain what it does well and what it does poorly.
-2. Then, at the very end of your response, provide a final ranking.
+1. First, evaluate each response individually based on these criteria:
+   - ACCURACY: Is the information factually correct?
+   - COMPLETENESS: Does it thoroughly address all aspects of the question?
+   - CLARITY: Is it well-organized and easy to understand?
+   - RELEVANCE: Does it stay focused on what was asked?
+   - INSIGHT: Does it provide valuable perspective or depth?
+
+2. For each response, explain what it does well and what it does poorly.
+
+3. Then, at the very end of your response, provide a final ranking based on overall quality.
 
 IMPORTANT: Your final ranking MUST be formatted EXACTLY as follows:
 - Start with the line "FINAL RANKING:" (all caps, with colon)
@@ -149,12 +498,24 @@ STAGE 1 - Individual Responses:
 STAGE 2 - Peer Rankings:
 {stage2_text}
 
-Your task as Chairman is to synthesize all of this information into a single, comprehensive, accurate answer to the user's original question. Consider:
-- The individual responses and their insights
-- The peer rankings and what they reveal about response quality
-- Any patterns of agreement or disagreement
+Your task as Chairman is to synthesize all of this information into a single, comprehensive, accurate answer to the user's original question.
 
-Provide a clear, well-reasoned final answer that represents the council's collective wisdom:"""
+Synthesis approach:
+1. IDENTIFY CONSENSUS: Note where models agree - these points likely have strong support
+2. WEIGH RANKINGS: Give more weight to insights from highly-ranked responses
+3. RESOLVE DISAGREEMENTS: Where models conflict, evaluate which perspective is most accurate/complete
+4. INTEGRATE STRENGTHS: Combine the best elements from each response
+5. ADDRESS GAPS: If all responses missed something important, include it
+6. ACKNOWLEDGE UNCERTAINTY: If there's genuine disagreement on facts or approach, note it
+
+Your final answer should:
+- Be comprehensive and accurate, drawing from the strongest insights across all responses
+- Resolve contradictions by selecting the most well-supported position
+- Highlight areas of consensus while addressing important dissenting views
+- Be clear and well-organized for the user
+- Represent the council's collective wisdom, not just repeat the top-ranked response
+
+Provide your synthesized final answer now:"""
 
     messages = [{"role": "user", "content": chairman_prompt}]
 
@@ -293,18 +654,38 @@ Title:"""
     return title
 
 
-async def run_full_council(user_query: str) -> Tuple[List, List, Dict, Dict]:
+async def run_full_council(
+    user_query: str,
+    clarifications: Optional[Dict[str, Any]] = None
+) -> Tuple[List, List, Dict, Dict]:
     """
     Run the complete 3-stage council process.
 
     Args:
         user_query: The user's question
+        clarifications: Optional clarifications from Stage 0
 
     Returns:
         Tuple of (stage1_results, stage2_results, stage3_result, metadata)
     """
+    # Build enriched context if clarifications provided
+    enriched_context = None
+    if clarifications:
+        # Extract user_questions from stage0_data if available
+        user_questions = None
+        stage0_data = clarifications.get('stage0_data')
+        if stage0_data:
+            user_questions = stage0_data.get('user_questions')
+
+        enriched_context = build_enriched_context(
+            user_query,
+            clarifications.get('user_answers'),
+            clarifications.get('research_results'),
+            user_questions
+        )
+
     # Stage 1: Collect individual responses
-    stage1_results = await stage1_collect_responses(user_query)
+    stage1_results = await stage1_collect_responses(user_query, enriched_context)
 
     # If no models responded successfully, return error
     if not stage1_results:
