@@ -35,6 +35,9 @@ async def perform_web_search(query: str) -> Optional[str]:
 
 async def _search_tavily(query: str) -> Optional[str]:
     """Search using Tavily API."""
+    # Use configured URL or default Tavily endpoint
+    tavily_url = SEARCH_API_URL or "https://api.tavily.com/search"
+
     headers = {
         "Content-Type": "application/json",
     }
@@ -49,7 +52,7 @@ async def _search_tavily(query: str) -> Optional[str]:
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                SEARCH_API_URL,
+                tavily_url,
                 headers=headers,
                 json=payload
             )
@@ -77,6 +80,9 @@ async def _search_tavily(query: str) -> Optional[str]:
 
 async def _search_serpapi(query: str) -> Optional[str]:
     """Search using SerpAPI."""
+    # Use configured URL or default SerpAPI endpoint
+    serpapi_url = SEARCH_API_URL or "https://serpapi.com/search"
+
     params = {
         "api_key": SEARCH_API_KEY,
         "q": query,
@@ -86,7 +92,7 @@ async def _search_serpapi(query: str) -> Optional[str]:
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
-                SEARCH_API_URL,
+                serpapi_url,
                 params=params
             )
             response.raise_for_status()
