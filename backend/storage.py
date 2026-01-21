@@ -131,28 +131,39 @@ def add_assistant_message(
     conversation_id: str,
     stage1: List[Dict[str, Any]],
     stage2: List[Dict[str, Any]],
-    stage3: Dict[str, Any]
+    stage3: Dict[str, Any],
+    clarifications: Optional[Dict[str, Any]] = None
 ):
     """
-    Add an assistant message with all 3 stages to a conversation.
+    Add an assistant message with all stages to a conversation.
 
     Args:
         conversation_id: Conversation identifier
         stage1: List of individual model responses
         stage2: List of model rankings
         stage3: Final synthesized response
+        clarifications: Optional dict with stage0_data, user_answers, research_results
     """
     conversation = get_conversation(conversation_id)
     if conversation is None:
         raise ValueError(f"Conversation {conversation_id} not found")
 
-    conversation["messages"].append({
+    message = {
         "role": "assistant",
         "stage1": stage1,
         "stage2": stage2,
         "stage3": stage3
-    })
+    }
 
+    # Add stage0/clarifications if provided
+    if clarifications:
+        message["stage0"] = clarifications.get("stage0_data")
+        message["clarifications"] = {
+            "user_answers": clarifications.get("user_answers"),
+            "research_results": clarifications.get("research_results")
+        }
+
+    conversation["messages"].append(message)
     save_conversation(conversation)
 
 
@@ -170,3 +181,22 @@ def update_conversation_title(conversation_id: str, title: str):
 
     conversation["title"] = title
     save_conversation(conversation)
+
+
+def delete_conversation(conversation_id: str) -> bool:
+    """
+    Delete a conversation from storage.
+
+    Args:
+        conversation_id: Unique identifier for the conversation
+
+    Returns:
+        True if deleted, False if not found
+    """
+    path = get_conversation_path(conversation_id)
+
+    if not os.path.exists(path):
+        return False
+
+    os.remove(path)
+    return True

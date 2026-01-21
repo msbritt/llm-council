@@ -57,7 +57,41 @@ function App() {
     setCurrentConversationId(id);
   };
 
-  const handleSendMessage = async (content) => {
+  const handleRenameConversation = async (id, newTitle) => {
+    try {
+      await api.renameConversation(id, newTitle);
+      // Update local state
+      setConversations((prev) =>
+        prev.map((conv) =>
+          conv.id === id ? { ...conv, title: newTitle } : conv
+        )
+      );
+    } catch (error) {
+      console.error('Failed to rename conversation:', error);
+    }
+  };
+
+  const handleDeleteConversation = async (id) => {
+    // Confirm before deleting
+    if (!window.confirm('Are you sure you want to delete this conversation?')) {
+      return;
+    }
+
+    try {
+      await api.deleteConversation(id);
+      // Remove from local state
+      setConversations((prev) => prev.filter((conv) => conv.id !== id));
+      // If deleting the current conversation, clear selection
+      if (currentConversationId === id) {
+        setCurrentConversationId(null);
+        setCurrentConversation(null);
+      }
+    } catch (error) {
+      console.error('Failed to delete conversation:', error);
+    }
+  };
+
+  const handleSendMessage = async (content, clarifications = null) => {
     if (!currentConversationId) return;
 
     setIsLoading(true);
@@ -72,10 +106,12 @@ function App() {
       // Create a partial assistant message that will be updated progressively
       const assistantMessage = {
         role: 'assistant',
+        stage0: clarifications?.stage0_data || null,
         stage1: null,
         stage2: null,
         stage3: null,
         metadata: null,
+        clarifications: clarifications,
         loading: {
           stage1: false,
           stage2: false,
@@ -89,8 +125,11 @@ function App() {
         messages: [...prev.messages, assistantMessage],
       }));
 
-      // Send message with streaming
-      await api.sendMessageStream(currentConversationId, content, (eventType, event) => {
+      // Send message with streaming (pass clarifications if provided)
+      await api.sendMessageStream(
+        currentConversationId,
+        content,
+        (eventType, event) => {
         switch (eventType) {
           case 'stage1_start':
             setCurrentConversation((prev) => {
@@ -169,7 +208,9 @@ function App() {
           default:
             console.log('Unknown event type:', eventType);
         }
-      });
+      },
+      clarifications
+      );
     } catch (error) {
       console.error('Failed to send message:', error);
       // Remove optimistic messages on error
@@ -188,6 +229,8 @@ function App() {
         currentConversationId={currentConversationId}
         onSelectConversation={handleSelectConversation}
         onNewConversation={handleNewConversation}
+        onRenameConversation={handleRenameConversation}
+        onDeleteConversation={handleDeleteConversation}
       />
       <ChatInterface
         conversation={currentConversation}
