@@ -21,7 +21,7 @@ from .council import (
     stage0_chairman_aggregate
 )
 from .research import perform_batch_research
-from .config import ENABLE_CLARIFICATION_ROUND
+from .config import ENABLE_CLARIFICATION_ROUND, COUNCIL_MODELS
 
 app = FastAPI(title="LLM Council API")
 
@@ -216,6 +216,11 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
 
     async def event_generator():
         try:
+            print(f"\n{'='*60}")
+            print(f"[STREAM] Starting council process for conversation {conversation_id}")
+            print(f"[STREAM] Query: {request.content[:100]}...")
+            print(f"{'='*60}\n")
+
             # Add user message
             storage.add_user_message(conversation_id, request.content)
 
@@ -275,19 +280,25 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
                 yield f"data: {json.dumps({'type': 'stage0_complete'})}\n\n"
 
             # Stage 1: Collect responses
+            print(f"[STAGE 1] Starting - collecting individual responses from {len(COUNCIL_MODELS)} models")
             yield f"data: {json.dumps({'type': 'stage1_start'})}\n\n"
             stage1_results = await stage1_collect_responses(request.content, enriched_context)
+            print(f"[STAGE 1] Complete - received {len(stage1_results)} responses")
             yield f"data: {json.dumps({'type': 'stage1_complete', 'data': stage1_results})}\n\n"
 
             # Stage 2: Collect rankings
+            print(f"[STAGE 2] Starting - collecting peer rankings")
             yield f"data: {json.dumps({'type': 'stage2_start'})}\n\n"
             stage2_results, label_to_model = await stage2_collect_rankings(request.content, stage1_results)
             aggregate_rankings = calculate_aggregate_rankings(stage2_results, label_to_model)
+            print(f"[STAGE 2] Complete - received {len(stage2_results)} rankings")
             yield f"data: {json.dumps({'type': 'stage2_complete', 'data': stage2_results, 'metadata': {'label_to_model': label_to_model, 'aggregate_rankings': aggregate_rankings}})}\n\n"
 
             # Stage 3: Synthesize final answer
+            print(f"[STAGE 3] Starting - chairman synthesizing final answer")
             yield f"data: {json.dumps({'type': 'stage3_start'})}\n\n"
             stage3_result = await stage3_synthesize_final(request.content, stage1_results, stage2_results)
+            print(f"[STAGE 3] Complete - synthesis finished")
             yield f"data: {json.dumps({'type': 'stage3_complete', 'data': stage3_result})}\n\n"
 
             # Wait for title generation if it was started
@@ -306,10 +317,14 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
             )
 
             # Send completion event
+            print(f"[STREAM] Council process complete\n{'='*60}\n")
             yield f"data: {json.dumps({'type': 'complete'})}\n\n"
 
         except Exception as e:
             # Send error event
+            print(f"[ERROR] Council process failed: {str(e)}")
+            import traceback
+            traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
     return StreamingResponse(
