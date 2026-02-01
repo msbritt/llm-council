@@ -347,7 +347,7 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
     """
     Send a message with SSE progress updates during iteration phase.
     """
-    from sse_starlette.sse import EventSourceResponse
+    from fastapi.responses import StreamingResponse
     from .council import run_iterative_phase, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings
     from .config import DEFAULT_MAX_ITERATIONS
 
@@ -468,7 +468,14 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
             traceback.print_exc()
             yield f"event: error\ndata: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
-    return EventSourceResponse(event_generator())
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
 
 
 if __name__ == "__main__":
