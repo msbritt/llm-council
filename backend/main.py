@@ -342,6 +342,138 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
     )
 
 
+@app.post("/api/conversations/{conversation_id}/message-stream")
+async def send_message_with_iteration(conversation_id: str, request: SendMessageRequest):
+    """
+    Send a message with SSE progress updates during iteration phase.
+    """
+    from sse_starlette.sse import EventSourceResponse
+    from .council import run_iterative_phase, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings
+    from .config import DEFAULT_MAX_ITERATIONS
+
+    # Check if conversation exists
+    conversation = storage.get_conversation(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    user_message = request.content
+    max_iterations = request.clarifications.get("max_iterations", DEFAULT_MAX_ITERATIONS) if request.clarifications else DEFAULT_MAX_ITERATIONS
+
+    # Check if this is the first message
+    is_first_message = len(conversation["messages"]) == 0
+
+    async def event_generator():
+        try:
+            # Add user message
+            storage.add_user_message(conversation_id, user_message)
+
+            # Generate title in parallel if first message
+            title_task = None
+            if is_first_message:
+                title_task = asyncio.create_task(generate_conversation_title(user_message))
+
+            # For now, use None callback (no user interaction during iteration)
+            # Future enhancement: implement proper bidirectional communication
+            answer_callback = None
+
+            # Start iteration phase
+            yield {
+                "event": "phase_start",
+                "data": json.dumps({"phase": "iteration"})
+            }
+
+            final_states = await run_iterative_phase(
+                user_message,
+                COUNCIL_MODELS,
+                max_iterations,
+                answer_callback
+            )
+
+            # Send completion
+            yield {
+                "event": "iteration_complete",
+                "data": json.dumps({
+                    "states": {
+                        mid: {
+                            "rounds": s.current_round,
+                            "response": s.final_response
+                        }
+                        for mid, s in final_states.items()
+                    }
+                })
+            }
+
+            # Continue with Stage 2 & 3
+            yield {
+                "event": "phase_start",
+                "data": json.dumps({"phase": "stage2"})
+            }
+
+            # Prepare responses for Stage 2
+            stage1_responses = [
+                {
+                    "model": mid,
+                    "response": state.final_response
+                }
+                for mid, state in final_states.items()
+            ]
+
+            # Run Stage 2
+            stage2_rankings, label_to_model = await stage2_collect_rankings(user_message, stage1_responses)
+
+            yield {
+                "event": "stage2_complete",
+                "data": json.dumps({
+                    "rankings": stage2_rankings,
+                    "label_to_model": label_to_model
+                })
+            }
+
+            # Run Stage 3
+            yield {
+                "event": "phase_start",
+                "data": json.dumps({"phase": "stage3"})
+            }
+
+            stage3_synthesis = await stage3_synthesize_final(
+                user_message,
+                stage1_responses,
+                stage2_rankings
+            )
+
+            yield {
+                "event": "complete",
+                "data": json.dumps({
+                    "stage3": stage3_synthesis,
+                    "aggregate_rankings": calculate_aggregate_rankings(stage2_rankings, label_to_model)
+                })
+            }
+
+            # Save complete assistant message
+            storage.add_assistant_message(
+                conversation_id,
+                stage1_responses,
+                stage2_rankings,
+                stage3_synthesis,
+                request.clarifications
+            )
+
+            # Wait for title if needed
+            if title_task:
+                title = await title_task
+                storage.update_conversation_title(conversation_id, title)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield {
+                "event": "error",
+                "data": json.dumps({"message": str(e)})
+            }
+
+    return EventSourceResponse(event_generator())
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)
