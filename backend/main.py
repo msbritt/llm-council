@@ -363,9 +363,12 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
     is_first_message = len(conversation["messages"]) == 0
 
     async def event_generator():
+        print(f"[SSE] Event generator started for conversation {conversation_id}")
         try:
             # Add user message
+            print(f"[SSE] Adding user message...")
             storage.add_user_message(conversation_id, user_message)
+            print(f"[SSE] User message added")
 
             # Generate title in parallel if first message
             title_task = None
@@ -377,17 +380,20 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
             answer_callback = None
 
             # Start iteration phase
+            print(f"[SSE] Yielding phase_start event...")
             yield {
                 "event": "phase_start",
                 "data": json.dumps({"phase": "iteration"})
             }
 
+            print(f"[SSE] Starting run_iterative_phase with max_iterations={max_iterations}")
             final_states = await run_iterative_phase(
                 user_message,
                 COUNCIL_MODELS,
                 max_iterations,
                 answer_callback
             )
+            print(f"[SSE] run_iterative_phase completed")
 
             # Send completion
             yield {
