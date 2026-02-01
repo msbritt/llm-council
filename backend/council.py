@@ -340,6 +340,138 @@ def build_enriched_context(
 
 
 # ============================================================================
+# Agentic Iteration Phase
+# ============================================================================
+
+from .iteration_types import ModelIterationRequest, ModelRoundState
+from .aggregation import aggregate_questions
+from .search import execute_search
+import asyncio
+
+
+async def execute_single_round(
+    user_query: str,
+    model_states: list[ModelRoundState],
+    round_num: int
+) -> dict:
+    """
+    Execute one round of iteration for all non-ready models.
+
+    Returns:
+        {
+            "model_requests": {model_id: ModelIterationRequest},
+            "aggregated_questions": [{"text": str, "asked_by": [ids]}],
+            "search_results": {query: results}
+        }
+    """
+    # Filter to only non-ready models
+    active_states = [s for s in model_states if not s.is_ready]
+
+    # Build prompts for each model
+    async def query_model_for_iteration(state: ModelRoundState):
+        prompt = _build_iteration_prompt(user_query, state, round_num)
+        response = await query_model(state.model_id, prompt)
+
+        if response is None:
+            # Graceful degradation
+            return state.model_id, ModelIterationRequest(
+                status="ready",
+                response="[Model failed to respond]"
+            )
+
+        # Parse structured response
+        request = _parse_iteration_response(response["content"])
+        return state.model_id, request
+
+    # Query all models in parallel
+    results = await asyncio.gather(
+        *[query_model_for_iteration(s) for s in active_states]
+    )
+    model_requests = dict(results)
+
+    # Aggregate searches and execute
+    all_searches = []
+    for req in model_requests.values():
+        all_searches.extend(req.searches)
+
+    search_results = {}
+    if all_searches:
+        search_tasks = [execute_search(q) for q in all_searches]
+        search_res = await asyncio.gather(*search_tasks)
+        search_results = dict(zip(all_searches, search_res))
+
+    # Aggregate questions
+    questions_by_model = {
+        mid: req.questions
+        for mid, req in model_requests.items()
+        if req.questions
+    }
+    aggregated_questions = aggregate_questions(questions_by_model)
+
+    return {
+        "model_requests": model_requests,
+        "aggregated_questions": aggregated_questions,
+        "search_results": search_results
+    }
+
+
+def _build_iteration_prompt(
+    user_query: str,
+    state: ModelRoundState,
+    round_num: int
+) -> str:
+    """Build prompt for a model's iteration round."""
+    prompt = f"""You are participating in a council to answer this question:
+
+{user_query}
+
+This is round {round_num}. You may request web searches or ask the user questions to gather more information.
+
+"""
+
+    # Add accumulated context
+    if state.accumulated_searches:
+        prompt += "\nPrevious search results:\n"
+        for search in state.accumulated_searches:
+            prompt += f"\nQ: {search['query']}\n{search['results']}\n"
+
+    if state.accumulated_questions:
+        prompt += "\nPrevious answers from user:\n"
+        for qa in state.accumulated_questions:
+            prompt += f"\nQ: {qa['q']}\nA: {qa['a']}\n"
+
+    prompt += """
+Respond in this JSON format:
+{
+  "status": "needs_info" or "ready",
+  "searches": ["search query 1", "search query 2"],
+  "questions": ["question for user"],
+  "response": "your final answer (only if status is ready)"
+}
+
+If you have enough information, set status to "ready" and provide your response.
+Otherwise, set status to "needs_info" and list searches/questions you need.
+"""
+
+    return prompt
+
+
+def _parse_iteration_response(content: str) -> ModelIterationRequest:
+    """Parse model's JSON response into structured request."""
+    import json
+
+    try:
+        data = json.loads(content)
+        return ModelIterationRequest(**data)
+    except (json.JSONDecodeError, ValueError):
+        # Fallback: treat as ready with content as response
+        return ModelIterationRequest(
+            status="ready",
+            response=content
+        )
+
+
+# ============================================================================
 # Stage 1: Individual Responses
 # ============================================================================
 
