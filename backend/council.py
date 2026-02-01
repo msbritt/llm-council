@@ -368,21 +368,25 @@ async def execute_single_round(
     active_states = [s for s in model_states if not s.is_ready]
 
     # Build prompts for each model
+    import time
+    def model_log(msg):
+        print(f"[{time.strftime('%H:%M:%S')}] [Round {round_num}] {msg}")
+
     async def query_model_for_iteration(state: ModelRoundState):
-        print(f"[Round {round_num}] Querying {state.model_id}...")
+        model_log(f"Querying {state.model_id}...")
         prompt = _build_iteration_prompt(user_query, state, round_num)
         messages = [{"role": "user", "content": prompt}]
         response = await query_model(state.model_id, messages)
 
         if response is None:
             # Graceful degradation
-            print(f"[Round {round_num}] {state.model_id} failed to respond")
+            model_log(f"{state.model_id} failed to respond")
             return state.model_id, ModelIterationRequest(
                 status="ready",
                 response="[Model failed to respond]"
             )
 
-        print(f"[Round {round_num}] {state.model_id} responded")
+        model_log(f"{state.model_id} responded")
 
         # Parse structured response
         request = _parse_iteration_response(response["content"])
@@ -500,21 +504,25 @@ async def run_iterative_phase(
         for mid in council_models
     }
 
+    import time
+    def log(msg):
+        print(f"[{time.strftime('%H:%M:%S')}] {msg}")
+
     for round_num in range(1, max_iterations + 1):
         # Get non-ready models
         active_models = [s for s in states.values() if not s.is_ready]
         if not active_models:
-            print(f"All models ready after {round_num - 1} rounds")
+            log(f"All models ready after {round_num - 1} rounds")
             break  # All models ready
 
-        print(f"Starting round {round_num} with {len(active_models)} active models")
+        log(f"Starting round {round_num} with {len(active_models)} active models")
         # Execute round
         round_result = await execute_single_round(
             user_query,
             list(states.values()),
             round_num
         )
-        print(f"Round {round_num} completed")
+        log(f"Round {round_num} completed")
 
         # Update states with results
         for model_id, request in round_result["model_requests"].items():

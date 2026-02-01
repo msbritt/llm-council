@@ -363,12 +363,16 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
     is_first_message = len(conversation["messages"]) == 0
 
     async def event_generator():
-        print(f"[SSE] Event generator started for conversation {conversation_id}")
+        import time
+        def log(msg):
+            print(f"[{time.strftime('%H:%M:%S')}] {msg}")
+
+        log(f"[SSE] Event generator started for conversation {conversation_id}")
         try:
             # Add user message
-            print(f"[SSE] Adding user message...")
+            log("[SSE] Adding user message...")
             storage.add_user_message(conversation_id, user_message)
-            print(f"[SSE] User message added")
+            log("[SSE] User message added")
 
             # Generate title in parallel if first message
             title_task = None
@@ -380,22 +384,23 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
             answer_callback = None
 
             # Start iteration phase
-            print(f"[SSE] Yielding phase_start event...")
+            log("[SSE] Yielding phase_start event...")
             yield {
                 "event": "phase_start",
                 "data": json.dumps({"phase": "iteration"})
             }
 
-            print(f"[SSE] Starting run_iterative_phase with max_iterations={max_iterations}")
+            log(f"[SSE] Starting run_iterative_phase with max_iterations={max_iterations}")
             final_states = await run_iterative_phase(
                 user_message,
                 COUNCIL_MODELS,
                 max_iterations,
                 answer_callback
             )
-            print(f"[SSE] run_iterative_phase completed")
+            log("[SSE] run_iterative_phase completed")
 
             # Send completion
+            log("[SSE] Yielding iteration_complete event...")
             yield {
                 "event": "iteration_complete",
                 "data": json.dumps({
@@ -408,14 +413,18 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
                     }
                 })
             }
+            log("[SSE] iteration_complete event yielded")
 
             # Continue with Stage 2 & 3
+            log("[SSE] Yielding phase_start for stage2...")
             yield {
                 "event": "phase_start",
                 "data": json.dumps({"phase": "stage2"})
             }
+            log("[SSE] phase_start event yielded")
 
             # Prepare responses for Stage 2
+            log("[SSE] Preparing responses for Stage 2...")
             stage1_responses = [
                 {
                     "model": mid,
@@ -423,10 +432,14 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
                 }
                 for mid, state in final_states.items()
             ]
+            log(f"[SSE] Prepared {len(stage1_responses)} responses for Stage 2")
 
             # Run Stage 2
+            log("[SSE] Starting stage2_collect_rankings...")
             stage2_rankings, label_to_model = await stage2_collect_rankings(user_message, stage1_responses)
+            log("[SSE] stage2_collect_rankings completed")
 
+            log("[SSE] Yielding stage2_complete event...")
             yield {
                 "event": "stage2_complete",
                 "data": json.dumps({
@@ -434,19 +447,25 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
                     "label_to_model": label_to_model
                 })
             }
+            log("[SSE] stage2_complete event yielded")
 
             # Run Stage 3
+            log("[SSE] Yielding phase_start for stage3...")
             yield {
                 "event": "phase_start",
                 "data": json.dumps({"phase": "stage3"})
             }
+            log("[SSE] phase_start event yielded")
 
+            log("[SSE] Starting stage3_synthesize_final...")
             stage3_synthesis = await stage3_synthesize_final(
                 user_message,
                 stage1_responses,
                 stage2_rankings
             )
+            log("[SSE] stage3_synthesize_final completed")
 
+            log("[SSE] Yielding complete event...")
             yield {
                 "event": "complete",
                 "data": json.dumps({
@@ -454,8 +473,10 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
                     "aggregate_rankings": calculate_aggregate_rankings(stage2_rankings, label_to_model)
                 })
             }
+            log("[SSE] complete event yielded")
 
             # Save complete assistant message
+            log("[SSE] Saving assistant message...")
             storage.add_assistant_message(
                 conversation_id,
                 stage1_responses,
@@ -463,11 +484,16 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
                 stage3_synthesis,
                 request.clarifications
             )
+            log("[SSE] Assistant message saved")
 
             # Wait for title if needed
             if title_task:
+                log("[SSE] Waiting for title generation...")
                 title = await title_task
                 storage.update_conversation_title(conversation_id, title)
+                log("[SSE] Title updated")
+
+            log("[SSE] Event generator completed successfully")
 
         except Exception as e:
             import traceback
