@@ -15,8 +15,10 @@ wheels/
 # Data files
 data/
 
+# Node modules (all locations)
+node_modules/
+
 # Frontend
-frontend/node_modules/
 frontend/dist/
 frontend/.vite/.vscode
 
