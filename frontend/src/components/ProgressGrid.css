@@ -1,0 +1,47 @@
+.progress-grid {
+  margin: 16px 0;
+  padding: 16px;
+  background: #f8f9fa;
+  border-radius: 8px;
+}
+
+.progress-grid table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+  font-size: 14px;
+}
+
+.progress-grid th {
+  padding: 8px;
+  text-align: left;
+  border-bottom: 2px solid #ddd;
+  font-weight: 600;
+}
+
+.progress-grid td {
+  padding: 8px;
+  border-bottom: 1px solid #eee;
+}
+
+.progress-grid .model-name {
+  font-weight: 500;
+}
+
+.progress-grid .round-cell {
+  text-align: center;
+  font-size: 16px;
+}
+
+.progress-grid .status-cell {
+  color: #666;
+}
+
+.progress-summary {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #ddd;
+  font-size: 13px;
+  color: #666;
+  text-align: right;
+}

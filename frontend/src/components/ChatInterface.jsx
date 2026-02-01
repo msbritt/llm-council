@@ -4,6 +4,7 @@ import Stage1 from './Stage1';
 import Stage2 from './Stage2';
 import Stage3 from './Stage3';
 import ClarificationRound from './ClarificationRound';
+import ProgressGrid from './ProgressGrid';
 import './ChatInterface.css';
 
 export default function ChatInterface({
@@ -13,6 +14,7 @@ export default function ChatInterface({
   pendingClarification,
   onClarificationSubmit,
   onClarificationSkip,
+  iterationPhase,
 }) {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef(null);
@@ -55,6 +57,13 @@ export default function ChatInterface({
   return (
     <div className="chat-interface">
       <div className="messages-container">
+        {iterationPhase?.active && (
+          <ProgressGrid
+            modelStates={iterationPhase.modelStates}
+            maxIterations={iterationPhase.maxIterations}
+          />
+        )}
+
         {conversation.messages.length === 0 ? (
           <div className="empty-state">
             <h2>Start a conversation</h2>

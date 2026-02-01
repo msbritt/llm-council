@@ -351,6 +351,7 @@ function App() {
         pendingClarification={pendingClarification}
         onClarificationSubmit={handleClarificationSubmit}
         onClarificationSkip={handleClarificationSkip}
+        iterationPhase={iterationPhase}
       />
     </div>
   );
