@@ -18,14 +18,12 @@ ENABLE_CLARIFICATION_ROUND = os.getenv("ENABLE_CLARIFICATION_ROUND", "true").low
 
 # Council members - list of OpenRouter model identifiers
 COUNCIL_MODELS = [
-    "openai/gpt-5.2",
-    "google/gemini-3-pro-preview",
-    "anthropic/claude-sonnet-4.5",
-    "x-ai/grok-4",
+    "openai/gpt-4o",
+    "anthropic/claude-3.5-sonnet"
 ]
 
 # Chairman model - synthesizes final response
-CHAIRMAN_MODEL = "openai/gpt-5.2"
+CHAIRMAN_MODEL = "anthropic/claude-3.5-sonnet"
 
 # Agentic iteration configuration
 DEFAULT_MAX_ITERATIONS = 3
