@@ -396,18 +396,8 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
             )
             log("[SSE] run_iterative_phase completed")
 
-            # Send completion
-            log("[SSE] Yielding iteration_complete event...")
-            yield f"event: iteration_complete\ndata: {json.dumps({'type': 'iteration_complete', 'states': {mid: {'rounds': s.current_round, 'response': s.final_response} for mid, s in final_states.items()}})}\n\n"
-            log("[SSE] iteration_complete event yielded")
-
-            # Continue with Stage 2 & 3
-            log("[SSE] Yielding phase_start for stage2...")
-            yield f"event: phase_start\ndata: {json.dumps({'type': 'phase_start', 'phase': 'stage2'})}\n\n"
-            log("[SSE] phase_start event yielded")
-
-            # Prepare responses for Stage 2
-            log("[SSE] Preparing responses for Stage 2...")
+            # Prepare responses for Stage 1 (iteration results)
+            log("[SSE] Preparing responses for Stage 1...")
             stage1_responses = [
                 {
                     "model": mid,
@@ -415,7 +405,17 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
                 }
                 for mid, state in final_states.items()
             ]
-            log(f"[SSE] Prepared {len(stage1_responses)} responses for Stage 2")
+            log(f"[SSE] Prepared {len(stage1_responses)} responses")
+
+            # Send Stage 1 completion
+            log("[SSE] Yielding stage1_complete event...")
+            yield f"data: {json.dumps({'type': 'stage1_complete', 'data': stage1_responses})}\n\n"
+            log("[SSE] stage1_complete event yielded")
+
+            # Start Stage 2
+            log("[SSE] Yielding stage2_start event...")
+            yield f"data: {json.dumps({'type': 'stage2_start'})}\n\n"
+            log("[SSE] stage2_start event yielded")
 
             # Run Stage 2
             log("[SSE] Starting stage2_collect_rankings...")
@@ -423,13 +423,13 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
             log("[SSE] stage2_collect_rankings completed")
 
             log("[SSE] Yielding stage2_complete event...")
-            yield f"event: stage2_complete\ndata: {json.dumps({'type': 'stage2_complete', 'rankings': stage2_rankings, 'label_to_model': label_to_model})}\n\n"
+            yield f"data: {json.dumps({'type': 'stage2_complete', 'data': stage2_rankings, 'metadata': {'label_to_model': label_to_model, 'aggregate_rankings': calculate_aggregate_rankings(stage2_rankings, label_to_model)}})}\n\n"
             log("[SSE] stage2_complete event yielded")
 
-            # Run Stage 3
-            log("[SSE] Yielding phase_start for stage3...")
-            yield f"event: phase_start\ndata: {json.dumps({'type': 'phase_start', 'phase': 'stage3'})}\n\n"
-            log("[SSE] phase_start event yielded")
+            # Start Stage 3
+            log("[SSE] Yielding stage3_start event...")
+            yield f"data: {json.dumps({'type': 'stage3_start'})}\n\n"
+            log("[SSE] stage3_start event yielded")
 
             log("[SSE] Starting stage3_synthesize_final...")
             stage3_synthesis = await stage3_synthesize_final(
@@ -439,8 +439,12 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
             )
             log("[SSE] stage3_synthesize_final completed")
 
-            log("[SSE] Yielding complete event...")
-            yield f"event: complete\ndata: {json.dumps({'type': 'complete', 'stage3': stage3_synthesis, 'aggregate_rankings': calculate_aggregate_rankings(stage2_rankings, label_to_model)})}\n\n"
+            log("[SSE] Yielding stage3_complete event...")
+            yield f"data: {json.dumps({'type': 'stage3_complete', 'data': stage3_synthesis})}\n\n"
+            log("[SSE] stage3_complete event yielded")
+
+            log("[SSE] Yielding final complete event...")
+            yield f"data: {json.dumps({'type': 'complete'})}\n\n"
             log("[SSE] complete event yielded")
 
             # Save complete assistant message
