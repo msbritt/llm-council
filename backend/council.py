@@ -471,6 +471,87 @@ def _parse_iteration_response(content: str) -> ModelIterationRequest:
         )
 
 
+async def run_iterative_phase(
+    user_query: str,
+    council_models: list[str],
+    max_iterations: int = 3,
+    user_answer_callback=None
+) -> dict[str, ModelRoundState]:
+    """
+    Run the full iterative phase across all models.
+
+    Args:
+        user_query: The question to answer
+        council_models: List of model IDs
+        max_iterations: Maximum rounds per model
+        user_answer_callback: Async function(questions) -> answers dict
+
+    Returns:
+        Final state for each model: {model_id: ModelRoundState}
+    """
+    # Initialize states
+    states = {
+        mid: ModelRoundState(model_id=mid, current_round=0, is_ready=False)
+        for mid in council_models
+    }
+
+    for round_num in range(1, max_iterations + 1):
+        # Get non-ready models
+        active_models = [s for s in states.values() if not s.is_ready]
+        if not active_models:
+            break  # All models ready
+
+        # Execute round
+        round_result = await execute_single_round(
+            user_query,
+            list(states.values()),
+            round_num
+        )
+
+        # Update states with results
+        for model_id, request in round_result["model_requests"].items():
+            state = states[model_id]
+            state.current_round = round_num
+
+            # Add search results this model requested
+            for query in request.searches:
+                if query in round_result["search_results"]:
+                    state.accumulated_searches.append({
+                        "query": query,
+                        "results": round_result["search_results"][query]
+                    })
+
+            # Check if ready
+            if request.status == "ready":
+                state.is_ready = True
+                state.final_response = request.response
+
+        # If there are questions, get user answers
+        if round_result["aggregated_questions"] and user_answer_callback:
+            user_answers = await user_answer_callback(
+                round_result["aggregated_questions"]
+            )
+
+            # Route answers to models that asked
+            for question in round_result["aggregated_questions"]:
+                answer = user_answers.get(question["text"])
+                if answer:
+                    for model_id in question["asked_by"]:
+                        if model_id in states:
+                            states[model_id].accumulated_questions.append({
+                                "q": question["text"],
+                                "a": answer
+                            })
+
+    # Force completion for any non-ready models
+    for state in states.values():
+        if not state.is_ready:
+            state.is_ready = True
+            state.final_response = "[No response after max iterations]"
+
+    return states
+
+
 # ============================================================================
 # Stage 1: Individual Responses
 # ============================================================================
