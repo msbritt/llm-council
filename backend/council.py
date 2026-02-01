@@ -370,7 +370,8 @@ async def execute_single_round(
     # Build prompts for each model
     async def query_model_for_iteration(state: ModelRoundState):
         prompt = _build_iteration_prompt(user_query, state, round_num)
-        response = await query_model(state.model_id, prompt)
+        messages = [{"role": "user", "content": prompt}]
+        response = await query_model(state.model_id, messages)
 
         if response is None:
             # Graceful degradation
