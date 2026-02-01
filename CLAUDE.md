@@ -78,6 +78,68 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
 - Global markdown styling in `index.css` with `.markdown-content` class
 - 12px padding on all markdown content to prevent cluttered appearance
 
+## Iteration Phase Architecture
+
+The agentic iteration system replaces the old synchronized Stage 0/1 with per-model loops:
+
+**Key Components:**
+
+- `backend/iteration_types.py`: Pydantic models for iteration state
+  - `ModelIterationRequest`: What a model requests during an iteration (status, searches, questions, response)
+  - `ModelRoundState`: Tracks a model's state across rounds (current_round, is_ready, accumulated context)
+  - `RoundAggregation`: Chairman's aggregation of round requests
+
+- `backend/aggregation.py`: Question deduplication logic
+  - `aggregate_questions()`: Normalizes and deduplicates questions from multiple models
+  - Handles contractions ("what's" → "what is") and punctuation removal
+
+- `backend/search.py`: Web search integration (placeholder for now)
+  - `execute_search()`: Returns placeholder results, future integration point for Brave/DuckDuckGo API
+
+- `backend/council.py`:
+  - `run_iterative_phase()`: Main orchestrator for full iteration cycle
+  - `execute_single_round()`: Per-round execution for all active models
+  - `_build_iteration_prompt()`: Constructs prompts with accumulated context (searches, answers)
+  - `_parse_iteration_response()`: Parses JSON from model responses with fallback handling
+
+**Frontend Components:**
+
+- `ProgressGrid.jsx`: Visual round-by-round progress tracking
+  - Shows each model's progress through iterations with symbols (·, ⏳, ✓, ●, —)
+  - Displays ready count and current status
+
+- `RoundQuestions.jsx`: User question interface per round
+  - Collects answers to questions requested by models
+  - Shows which models asked each question
+  - Submit/skip functionality for user interaction
+
+**SSE Events:**
+
+The `/api/conversations/{id}/message-stream` endpoint streams iteration progress:
+
+- `phase_start`: Signals phase transition (iteration, stage2, stage3)
+- `questions_needed`: Requests user input during iteration
+- `iteration_complete`: All models ready, includes final states
+- `stage2_complete`: Ranking phase done
+- `complete`: Full response ready with Stage 3 synthesis
+
+**Configuration:**
+
+- Default max iterations: 3 (configurable in UI per message via dropdown)
+- Iteration timeout: 60s per model per round
+- Models run independently, signaling READY when satisfied or hitting max rounds
+
+**Flow:**
+
+1. User sends query with max_iterations setting
+2. Each model iterates up to N times:
+   - Requests searches (executed via placeholder)
+   - Asks clarifying questions (aggregated by chairman)
+   - Accumulates context from previous rounds
+   - Signals READY when satisfied
+3. After all models ready → Stage 2 (peer ranking)
+4. After Stage 2 → Stage 3 (chairman synthesis)
+
 ## Key Design Decisions
 
 ### Stage 2 Prompt Format
