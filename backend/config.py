@@ -27,6 +27,10 @@ COUNCIL_MODELS = [
 # Chairman model - synthesizes final response
 CHAIRMAN_MODEL = "openai/gpt-5.2"
 
+# Agentic iteration configuration
+DEFAULT_MAX_ITERATIONS = 3
+ITERATION_TIMEOUT_SECONDS = 60  # Per model per round
+
 # OpenRouter API endpoint
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
