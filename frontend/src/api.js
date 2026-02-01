@@ -132,7 +132,7 @@ export const api = {
    */
   async sendMessageStream(conversationId, content, onEvent, clarifications = null) {
     const response = await fetch(
-      `${API_BASE}/api/conversations/${conversationId}/message/stream`,
+      `${API_BASE}/api/conversations/${conversationId}/message-stream`,
       {
         method: 'POST',
         headers: {
