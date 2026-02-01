@@ -93,8 +93,8 @@ The agentic iteration system replaces the old synchronized Stage 0/1 with per-mo
   - `aggregate_questions()`: Normalizes and deduplicates questions from multiple models
   - Handles contractions ("what's" → "what is") and punctuation removal
 
-- `backend/search.py`: Web search integration (placeholder for now)
-  - `execute_search()`: Returns placeholder results, future integration point for Brave/DuckDuckGo API
+- `backend/search.py`: Web search integration via Tavily
+  - `execute_search()`: Delegates to `perform_web_search()` from `research.py`, returns fallback message on failure
 
 - `backend/council.py`:
   - `run_iterative_phase()`: Main orchestrator for full iteration cycle
