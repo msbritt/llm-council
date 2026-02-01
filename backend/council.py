@@ -444,14 +444,12 @@ This is round {round_num}. You may request web searches or ask the user question
     prompt += """
 Respond in this JSON format:
 {
-  "status": "needs_info" or "ready",
-  "searches": ["search query 1", "search query 2"],
-  "questions": ["question for user"],
-  "response": "your final answer (only if status is ready)"
+  "status": "ready",
+  "response": "your detailed answer to the question"
 }
 
-If you have enough information, set status to "ready" and provide your response.
-Otherwise, set status to "needs_info" and list searches/questions you need.
+IMPORTANT: Always set status to "ready" and provide your best answer based on the information available.
+Do NOT set status to "needs_info" or request searches/questions - just answer directly.
 """
 
     return prompt
