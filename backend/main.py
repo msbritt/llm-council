@@ -385,10 +385,7 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
 
             # Start iteration phase
             log("[SSE] Yielding phase_start event...")
-            yield {
-                "event": "phase_start",
-                "data": json.dumps({"phase": "iteration"})
-            }
+            yield f"event: phase_start\ndata: {json.dumps({'type': 'phase_start', 'phase': 'iteration'})}\n\n"
 
             log(f"[SSE] Starting run_iterative_phase with max_iterations={max_iterations}")
             final_states = await run_iterative_phase(
@@ -401,26 +398,12 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
 
             # Send completion
             log("[SSE] Yielding iteration_complete event...")
-            yield {
-                "event": "iteration_complete",
-                "data": json.dumps({
-                    "states": {
-                        mid: {
-                            "rounds": s.current_round,
-                            "response": s.final_response
-                        }
-                        for mid, s in final_states.items()
-                    }
-                })
-            }
+            yield f"event: iteration_complete\ndata: {json.dumps({'type': 'iteration_complete', 'states': {mid: {'rounds': s.current_round, 'response': s.final_response} for mid, s in final_states.items()}})}\n\n"
             log("[SSE] iteration_complete event yielded")
 
             # Continue with Stage 2 & 3
             log("[SSE] Yielding phase_start for stage2...")
-            yield {
-                "event": "phase_start",
-                "data": json.dumps({"phase": "stage2"})
-            }
+            yield f"event: phase_start\ndata: {json.dumps({'type': 'phase_start', 'phase': 'stage2'})}\n\n"
             log("[SSE] phase_start event yielded")
 
             # Prepare responses for Stage 2
@@ -440,21 +423,12 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
             log("[SSE] stage2_collect_rankings completed")
 
             log("[SSE] Yielding stage2_complete event...")
-            yield {
-                "event": "stage2_complete",
-                "data": json.dumps({
-                    "rankings": stage2_rankings,
-                    "label_to_model": label_to_model
-                })
-            }
+            yield f"event: stage2_complete\ndata: {json.dumps({'type': 'stage2_complete', 'rankings': stage2_rankings, 'label_to_model': label_to_model})}\n\n"
             log("[SSE] stage2_complete event yielded")
 
             # Run Stage 3
             log("[SSE] Yielding phase_start for stage3...")
-            yield {
-                "event": "phase_start",
-                "data": json.dumps({"phase": "stage3"})
-            }
+            yield f"event: phase_start\ndata: {json.dumps({'type': 'phase_start', 'phase': 'stage3'})}\n\n"
             log("[SSE] phase_start event yielded")
 
             log("[SSE] Starting stage3_synthesize_final...")
@@ -466,13 +440,7 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
             log("[SSE] stage3_synthesize_final completed")
 
             log("[SSE] Yielding complete event...")
-            yield {
-                "event": "complete",
-                "data": json.dumps({
-                    "stage3": stage3_synthesis,
-                    "aggregate_rankings": calculate_aggregate_rankings(stage2_rankings, label_to_model)
-                })
-            }
+            yield f"event: complete\ndata: {json.dumps({'type': 'complete', 'stage3': stage3_synthesis, 'aggregate_rankings': calculate_aggregate_rankings(stage2_rankings, label_to_model)})}\n\n"
             log("[SSE] complete event yielded")
 
             # Save complete assistant message
@@ -498,10 +466,7 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
         except Exception as e:
             import traceback
             traceback.print_exc()
-            yield {
-                "event": "error",
-                "data": json.dumps({"message": str(e)})
-            }
+            yield f"event: error\ndata: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
     return EventSourceResponse(event_generator())
 
