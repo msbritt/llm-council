@@ -10,6 +10,12 @@ function App() {
   const [currentConversation, setCurrentConversation] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [pendingClarification, setPendingClarification] = useState(null);
+  const [iterationPhase, setIterationPhase] = useState({
+    active: false,
+    maxIterations: 3,
+    modelStates: {}, // {modelId: {round: N, status: 'thinking'|'ready'}}
+    pendingQuestions: null
+  });
 
   // Load conversations on mount
   useEffect(() => {
@@ -132,6 +138,32 @@ function App() {
         content,
         (eventType, event) => {
         switch (eventType) {
+          case 'phase_start':
+            // Iteration or other phase starting
+            if (event.phase === 'iteration') {
+              setIterationPhase(prev => ({ ...prev, active: true }));
+              console.log('Iteration phase started');
+            }
+            break;
+
+          case 'questions_needed':
+            // Models need answers during iteration
+            setIterationPhase(prev => ({
+              ...prev,
+              pendingQuestions: event.questions
+            }));
+            break;
+
+          case 'iteration_complete':
+            // All models have finished iterating
+            setIterationPhase(prev => ({
+              ...prev,
+              active: false,
+              modelStates: event.states
+            }));
+            console.log('Iteration complete:', event.states);
+            break;
+
           case 'stage0_start':
             // Stage 0 has started - collecting clarifying questions
             console.log('Stage 0 started: collecting clarifying questions');
