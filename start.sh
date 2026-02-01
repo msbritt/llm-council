@@ -5,6 +5,25 @@
 echo "Starting LLM Council..."
 echo ""
 
+# Stop any existing servers
+echo "Checking for existing servers..."
+BACKEND_PID=$(lsof -ti:8001)
+FRONTEND_PID=$(lsof -ti:5173)
+
+if [ -n "$BACKEND_PID" ]; then
+  echo "  Stopping existing backend (PID: $BACKEND_PID)..."
+  kill $BACKEND_PID 2>/dev/null
+  sleep 1
+fi
+
+if [ -n "$FRONTEND_PID" ]; then
+  echo "  Stopping existing frontend (PID: $FRONTEND_PID)..."
+  kill $FRONTEND_PID 2>/dev/null
+  sleep 1
+fi
+
+echo ""
+
 # Start backend
 echo "Starting backend on http://localhost:8001..."
 uv run python -m backend.main &
