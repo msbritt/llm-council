@@ -248,12 +248,17 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
 
             # Stage 0 (optional): If no clarifications provided and feature enabled, collect questions
             if not request.clarifications and ENABLE_CLARIFICATION_ROUND:
+                print(f"[STAGE 0] Starting - enabled={ENABLE_CLARIFICATION_ROUND}, has_clarifications={request.clarifications is not None}")
                 yield f"data: {json.dumps({'type': 'stage0_start'})}\n\n"
 
+                print(f"[STAGE 0] Collecting questions from {len(COUNCIL_MODELS)} models")
                 stage0_results = await stage0_collect_questions(request.content)
+                print(f"[STAGE 0] Collected {len(stage0_results)} question sets")
                 yield f"data: {json.dumps({'type': 'stage0_questions_collected', 'data': stage0_results})}\n\n"
 
+                print(f"[STAGE 0] Chairman aggregating questions")
                 aggregated = await stage0_chairman_aggregate(request.content, stage0_results)
+                print(f"[STAGE 0] Aggregated: {len(aggregated.get('user_questions', []))} user questions, {len(aggregated.get('research_queries', []))} research queries")
 
                 # Perform research automatically
                 research_results = {}
@@ -264,7 +269,7 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
 
                 # If there are user questions, pause and wait for answers
                 if aggregated.get('user_questions'):
-                    yield f"data: {json.dumps({'type': 'stage0_needs_user_input', 'user_questions': aggregated['user_questions'], 'research_results': research_results})}\n\n"
+                    yield f"data: {json.dumps({'type': 'stage0_needs_user_input', 'user_questions': aggregated['user_questions'], 'research_results': research_results, 'stage0_raw': stage0_results})}\n\n"
                     # Stream will pause here - frontend needs to reconnect with clarifications
                     return
 

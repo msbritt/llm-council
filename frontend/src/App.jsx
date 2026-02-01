@@ -9,6 +9,7 @@ function App() {
   const [currentConversationId, setCurrentConversationId] = useState(null);
   const [currentConversation, setCurrentConversation] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [pendingClarification, setPendingClarification] = useState(null);
 
   // Load conversations on mount
   useEffect(() => {
@@ -131,6 +132,43 @@ function App() {
         content,
         (eventType, event) => {
         switch (eventType) {
+          case 'stage0_start':
+            // Stage 0 has started - collecting clarifying questions
+            console.log('Stage 0 started: collecting clarifying questions');
+            break;
+
+          case 'stage0_questions_collected':
+            // Models have returned their questions
+            console.log('Stage 0 questions collected:', event.data);
+            break;
+
+          case 'stage0_research_start':
+            // Research queries are being executed
+            console.log('Stage 0 research started');
+            break;
+
+          case 'stage0_research_complete':
+            // Research is done
+            console.log('Stage 0 research complete:', event.data);
+            break;
+
+          case 'stage0_needs_user_input':
+            // Backend is paused, waiting for user to answer questions
+            // Store the data and stop the loading state
+            setPendingClarification({
+              userQuestions: event.user_questions || [],
+              researchResults: event.research_results || {},
+              stage0Raw: event.stage0_raw || [],
+              originalQuery: content,
+            });
+            setIsLoading(false);
+            break;
+
+          case 'stage0_complete':
+            // Stage 0 finished with no user input needed
+            console.log('Stage 0 complete (no user input needed)');
+            break;
+
           case 'stage1_start':
             setCurrentConversation((prev) => {
               const messages = [...prev.messages];
@@ -222,6 +260,48 @@ function App() {
     }
   };
 
+  const handleClarificationSubmit = (answers) => {
+    if (!pendingClarification) return;
+
+    // Build the clarifications object that backend expects
+    const clarifications = {
+      user_answers: answers,
+      research_results: pendingClarification.researchResults,
+      stage0_data: {
+        user_questions: pendingClarification.userQuestions,
+        stage0_raw: pendingClarification.stage0Raw,
+      },
+    };
+
+    // Clear the pending state
+    const originalQuery = pendingClarification.originalQuery;
+    setPendingClarification(null);
+
+    // Re-send the original message with clarifications
+    handleSendMessage(originalQuery, clarifications);
+  };
+
+  const handleClarificationSkip = () => {
+    if (!pendingClarification) return;
+
+    // Build clarifications with empty answers (backend will proceed without user input)
+    const clarifications = {
+      user_answers: {},
+      research_results: pendingClarification.researchResults,
+      stage0_data: {
+        user_questions: pendingClarification.userQuestions,
+        stage0_raw: pendingClarification.stage0Raw,
+      },
+    };
+
+    // Clear the pending state
+    const originalQuery = pendingClarification.originalQuery;
+    setPendingClarification(null);
+
+    // Re-send the original message with clarifications (but no answers)
+    handleSendMessage(originalQuery, clarifications);
+  };
+
   return (
     <div className="app">
       <Sidebar
@@ -236,6 +316,9 @@ function App() {
         conversation={currentConversation}
         onSendMessage={handleSendMessage}
         isLoading={isLoading}
+        pendingClarification={pendingClarification}
+        onClarificationSubmit={handleClarificationSubmit}
+        onClarificationSkip={handleClarificationSkip}
       />
     </div>
   );

@@ -3,12 +3,16 @@ import ReactMarkdown from 'react-markdown';
 import Stage1 from './Stage1';
 import Stage2 from './Stage2';
 import Stage3 from './Stage3';
+import ClarificationRound from './ClarificationRound';
 import './ChatInterface.css';
 
 export default function ChatInterface({
   conversation,
   onSendMessage,
   isLoading,
+  pendingClarification,
+  onClarificationSubmit,
+  onClarificationSkip,
 }) {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef(null);
@@ -110,7 +114,17 @@ export default function ChatInterface({
           ))
         )}
 
-        {isLoading && (
+        {pendingClarification && (
+          <ClarificationRound
+            userQuestions={pendingClarification.userQuestions}
+            researchResults={pendingClarification.researchResults}
+            stage0Raw={pendingClarification.stage0Raw}
+            onSubmit={onClarificationSubmit}
+            onSkip={onClarificationSkip}
+          />
+        )}
+
+        {isLoading && !pendingClarification && (
           <div className="loading-indicator">
             <div className="spinner"></div>
             <span>Consulting the council...</span>
