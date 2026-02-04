@@ -10,11 +10,14 @@ function App() {
   const [currentConversation, setCurrentConversation] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [pendingClarification, setPendingClarification] = useState(null);
+  const [currentQuery, setCurrentQuery] = useState(null);
   const [iterationPhase, setIterationPhase] = useState({
     active: false,
     maxIterations: 3,
     modelStates: {}, // {modelId: {round: N, status: 'thinking'|'ready'}}
-    pendingQuestions: null
+    pendingQuestions: null,
+    savedState: null,
+    roundHistory: []
   });
 
   // Load conversations on mount
@@ -98,45 +101,51 @@ function App() {
     }
   };
 
-  const handleSendMessage = async (content, clarifications = null) => {
+  const handleSendMessage = async (content, clarifications = null, skipOptimisticMessages = false) => {
     if (!currentConversationId) return;
 
     setIsLoading(true);
     try {
-      // Optimistically add user message to UI
-      const userMessage = { role: 'user', content };
-      setCurrentConversation((prev) => ({
-        ...prev,
-        messages: [...prev.messages, userMessage],
-      }));
+      // Only add messages if not resuming
+      if (!skipOptimisticMessages) {
+        // Optimistically add user message to UI
+        const userMessage = { role: 'user', content };
+        setCurrentConversation((prev) => ({
+          ...prev,
+          messages: [...prev.messages, userMessage],
+        }));
 
-      // Create a partial assistant message that will be updated progressively
-      const assistantMessage = {
-        role: 'assistant',
-        stage0: clarifications?.stage0_data || null,
-        stage1: null,
-        stage2: null,
-        stage3: null,
-        metadata: null,
-        clarifications: clarifications,
-        loading: {
-          stage1: false,
-          stage2: false,
-          stage3: false,
-        },
-      };
+        // Create a partial assistant message that will be updated progressively
+        const assistantMessage = {
+          role: 'assistant',
+          stage0: clarifications?.stage0_data || null,
+          iterationRounds: [],
+          stage1: null,
+          stage2: null,
+          stage3: null,
+          metadata: null,
+          clarifications: clarifications,
+          loading: {
+            stage1: false,
+            stage2: false,
+            stage3: false,
+          },
+        };
 
-      // Add the partial assistant message
-      setCurrentConversation((prev) => ({
-        ...prev,
-        messages: [...prev.messages, assistantMessage],
-      }));
+        // Add the partial assistant message
+        setCurrentConversation((prev) => ({
+          ...prev,
+          messages: [...prev.messages, assistantMessage],
+        }));
+      }
 
       // Send message with streaming (pass clarifications if provided)
+      console.log(`[Stream Start ${new Date().toISOString()}]`);
       await api.sendMessageStream(
         currentConversationId,
         content,
         (eventType, event) => {
+        console.log(`[SSE Event ${new Date().toISOString()}]`, eventType, event);  // DEBUG
         switch (eventType) {
           case 'phase_start':
             // Iteration or other phase starting
@@ -147,11 +156,27 @@ function App() {
             break;
 
           case 'questions_needed':
-            // Models need answers during iteration
+            // Models need answers during iteration - pause for user input
             setIterationPhase(prev => ({
               ...prev,
-              pendingQuestions: event.questions
+              active: false,  // Pause visual indicator
+              pendingQuestions: event.questions,
+              savedState: event.iteration_state,  // Store full state for resubmit
+              roundHistory: event.round_history || []
             }));
+            setIsLoading(false);  // Show UI
+            // Store the query for resubmission (it's in the iteration_state)
+            setCurrentQuery(event.iteration_state?.user_query || content);
+
+            // Update the last assistant message with round history
+            setCurrentConversation((prev) => {
+              const messages = [...prev.messages];
+              const lastMsg = messages[messages.length - 1];
+              if (lastMsg.role === 'assistant') {
+                lastMsg.iterationRounds = event.round_history || [];
+              }
+              return { ...prev, messages };
+            });
             break;
 
           case 'iteration_complete':
@@ -215,6 +240,7 @@ function App() {
               const messages = [...prev.messages];
               const lastMsg = messages[messages.length - 1];
               lastMsg.stage1 = event.data;
+              lastMsg.iterationRounds = event.round_history || lastMsg.iterationRounds || [];
               lastMsg.loading.stage1 = false;
               return { ...prev, messages };
             });
@@ -281,8 +307,9 @@ function App() {
       },
       clarifications
       );
+      console.log(`[Stream Complete ${new Date().toISOString()}]`);
     } catch (error) {
-      console.error('Failed to send message:', error);
+      console.error(`[Stream Error ${new Date().toISOString()}]`, error);
       // Remove optimistic messages on error
       setCurrentConversation((prev) => ({
         ...prev,
@@ -309,8 +336,8 @@ function App() {
     const originalQuery = pendingClarification.originalQuery;
     setPendingClarification(null);
 
-    // Re-send the original message with clarifications
-    handleSendMessage(originalQuery, clarifications);
+    // Re-send the original message with clarifications - skip adding new messages
+    handleSendMessage(originalQuery, clarifications, true);  // true = skipOptimisticMessages
   };
 
   const handleClarificationSkip = () => {
@@ -330,8 +357,36 @@ function App() {
     const originalQuery = pendingClarification.originalQuery;
     setPendingClarification(null);
 
-    // Re-send the original message with clarifications (but no answers)
-    handleSendMessage(originalQuery, clarifications);
+    // Re-send the original message with clarifications (but no answers) - skip adding new messages
+    handleSendMessage(originalQuery, clarifications, true);  // true = skipOptimisticMessages
+  };
+
+  const handleIterationAnswerSubmit = (answers) => {
+    const savedState = iterationPhase.savedState;
+    if (!savedState) return;
+
+    const query = savedState.user_query;
+
+    const clarifications = {
+      iteration_state: {
+        ...savedState,
+        user_answers: answers,
+      }
+    };
+
+    // Clear iteration state
+    setIterationPhase({
+      active: false,
+      maxIterations: savedState.max_iterations,
+      modelStates: {},
+      pendingQuestions: null,
+      savedState: null,
+      roundHistory: []
+    });
+    setCurrentQuery(null);
+
+    // Resubmit with answers - skip adding new messages since they already exist
+    handleSendMessage(query, clarifications, true);  // true = skipOptimisticMessages
   };
 
   return (
@@ -352,6 +407,7 @@ function App() {
         onClarificationSubmit={handleClarificationSubmit}
         onClarificationSkip={handleClarificationSkip}
         iterationPhase={iterationPhase}
+        onIterationAnswerSubmit={handleIterationAnswerSubmit}
       />
     </div>
   );
