@@ -17,10 +17,26 @@ LLM Council is a 3-stage deliberation system where multiple LLMs collaboratively
 - Backend runs on **port 8001** (NOT 8000 - user had another app on 8000)
 
 **`openrouter.py`**
-- `query_model()`: Single async model query
+- `query_model()`: Single async model query with retry logic
 - `query_models_parallel()`: Parallel queries using `asyncio.gather()`
 - Returns dict with 'content' and optional 'reasoning_details'
 - Graceful degradation: returns None on failure, continues with successful responses
+
+**Retry Logic (`openrouter.py`)**
+
+The `query_model()` function includes retry logic for transient failures:
+
+- **Retryable errors:** 429 (rate limit), 500, 502, 503, 504 (server errors), timeouts
+- **Not retried:** 400, 401, 403, 404 (client errors)
+- **Strategy:** Exponential backoff (1s, 2s, 4s) with 50% jitter
+- **Max attempts:** 3 (1 initial + 2 retries)
+- **Rate limits:** Respects Retry-After header when present
+
+Configuration in `config.py`:
+- `RETRY_MAX_ATTEMPTS`: Total attempts including initial (default: 3)
+- `RETRY_BASE_DELAY`: Starting delay (default: 1.0s)
+- `RETRY_MAX_DELAY`: Maximum delay cap (default: 8.0s)
+- `RETRYABLE_STATUS_CODES`: List of HTTP codes to retry (429, 500, 502, 503, 504)
 
 **`council.py`** - The Core Logic
 - `stage1_collect_responses()`: Parallel queries to all council models
