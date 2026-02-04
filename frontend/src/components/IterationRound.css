@@ -1,0 +1,138 @@
+.iteration-round {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  padding: 20px;
+  margin: 20px 0;
+}
+
+.round-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid #4a90e2;
+}
+
+.round-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: #333;
+}
+
+.all-ready-badge {
+  background: #28a745;
+  color: white;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.model-statuses {
+  margin-bottom: 20px;
+}
+
+.model-statuses h4 {
+  margin: 0 0 12px 0;
+  font-size: 0.95rem;
+  color: #666;
+}
+
+.model-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: white;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.status-icon {
+  font-size: 1.1rem;
+  width: 24px;
+  text-align: center;
+}
+
+.status-icon.ready {
+  color: #28a745;
+}
+
+.status-icon.needs_info {
+  color: #ffc107;
+}
+
+.model-name {
+  font-weight: 600;
+  color: #333;
+  min-width: 120px;
+}
+
+.model-timing {
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.model-state {
+  color: #666;
+  font-size: 0.9rem;
+  margin-left: auto;
+}
+
+.round-questions-display {
+  margin-top: 20px;
+}
+
+.round-questions-display h4 {
+  margin: 0 0 12px 0;
+  font-size: 0.95rem;
+  color: #666;
+}
+
+.question-display {
+  background: white;
+  border-left: 3px solid #4a90e2;
+  padding: 12px;
+  margin-bottom: 12px;
+  border-radius: 4px;
+}
+
+.question-text {
+  color: #333;
+  margin-bottom: 6px;
+  font-size: 0.95rem;
+}
+
+.asked-by {
+  color: #666;
+  font-size: 0.85rem;
+  font-style: italic;
+  margin-bottom: 8px;
+}
+
+.user-answer {
+  background: #e7f3ff;
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin-top: 8px;
+  font-size: 0.9rem;
+}
+
+.user-answer strong {
+  color: #4a90e2;
+}
+
+.no-questions {
+  background: white;
+  padding: 16px;
+  border-radius: 6px;
+  text-align: center;
+}
+
+.no-questions p {
+  margin: 0;
+  color: #28a745;
+  font-weight: 500;
+}
