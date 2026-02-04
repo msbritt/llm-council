@@ -187,3 +187,15 @@
   background: #ccc;
   border-color: #ccc;
 }
+
+.iteration-rounds-section {
+  margin-bottom: 30px;
+}
+
+.section-header {
+  font-size: 1.2rem;
+  color: #333;
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid #4a90e2;
+}

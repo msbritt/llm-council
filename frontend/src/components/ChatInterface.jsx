@@ -4,7 +4,9 @@ import Stage1 from './Stage1';
 import Stage2 from './Stage2';
 import Stage3 from './Stage3';
 import ClarificationRound from './ClarificationRound';
+import RoundQuestions from './RoundQuestions';
 import ProgressGrid from './ProgressGrid';
+import IterationRound from './IterationRound';
 import './ChatInterface.css';
 
 export default function ChatInterface({
@@ -15,6 +17,7 @@ export default function ChatInterface({
   onClarificationSubmit,
   onClarificationSkip,
   iterationPhase,
+  onIterationAnswerSubmit,
 }) {
   const [input, setInput] = useState('');
   const [maxIterations, setMaxIterations] = useState(3);
@@ -86,6 +89,16 @@ export default function ChatInterface({
                 <div className="assistant-message">
                   <div className="message-label">LLM Council</div>
 
+                  {/* Show iteration rounds if they exist */}
+                  {msg.iterationRounds && msg.iterationRounds.length > 0 && (
+                    <div className="iteration-rounds-section">
+                      <h3 className="section-header">Iteration Rounds</h3>
+                      {msg.iterationRounds.map((round) => (
+                        <IterationRound key={round.roundNum} round={round} />
+                      ))}
+                    </div>
+                  )}
+
                   {/* Stage 1 */}
                   {msg.loading?.stage1 && (
                     <div className="stage-loading">
@@ -131,6 +144,14 @@ export default function ChatInterface({
             stage0Raw={pendingClarification.stage0Raw}
             onSubmit={onClarificationSubmit}
             onSkip={onClarificationSkip}
+          />
+        )}
+
+        {iterationPhase?.pendingQuestions && (
+          <RoundQuestions
+            questions={iterationPhase.pendingQuestions}
+            onSubmit={onIterationAnswerSubmit}
+            searchCount={Object.keys(iterationPhase.savedState?.search_results || {}).length}
           />
         )}
 
