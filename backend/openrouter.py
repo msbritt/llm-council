@@ -142,8 +142,6 @@ async def query_models_parallel(
     Returns:
         Dict mapping model identifier to response dict (or None if failed)
     """
-    import asyncio
-
     # Create tasks for all models
     tasks = [query_model(model, messages) for model in models]
 
@@ -151,4 +149,12 @@ async def query_models_parallel(
     responses = await asyncio.gather(*tasks)
 
     # Map models to their responses
-    return {model: response for model, response in zip(models, responses)}
+    result = {model: response for model, response in zip(models, responses)}
+
+    # Log summary
+    succeeded = sum(1 for r in responses if r is not None)
+    failed = len(responses) - succeeded
+    if failed > 0:
+        print(f"[SUMMARY] Parallel query: {succeeded}/{len(models)} models succeeded, {failed} failed")
+
+    return result
