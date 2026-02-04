@@ -3,6 +3,20 @@
   border-color: #c8e6c8;
 }
 
+.stage3.final-answer {
+  background: #f0fff0;
+  border: 2px solid #28a745;
+  border-radius: 8px;
+  padding: 24px;
+  margin-top: 30px;
+}
+
+.stage3.final-answer h3 {
+  font-size: 1.3rem;
+  color: #28a745;
+  margin-bottom: 20px;
+}
+
 .final-response {
   background: #ffffff;
   padding: 20px;
