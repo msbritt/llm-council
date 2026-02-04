@@ -455,23 +455,43 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
             for resp in stage1_responses:
                 print(f"[DEBUG] Model: {resp['model']}, Response preview: {resp['response'][:100] if resp['response'] else 'None'}...")
 
+            # Validate that we have at least one valid response
+            valid_responses = [
+                r for r in stage1_responses
+                if r['response'] not in ["[Model failed to respond]", "[No response after max iterations]"]
+            ]
+
+            if len(valid_responses) == 0:
+                # All models failed - cannot continue
+                error_message = "All models failed to provide valid responses. Please try again."
+                print(f"[ERROR] All models failed during iteration")
+
+                # Send Stage 1 completion with error indicator
+                yield f"data: {json.dumps({'type': 'stage1_complete', 'data': stage1_responses, 'round_history': round_history, 'all_failed': True})}\n\n"
+
+                # Send error and complete
+                yield f"data: {json.dumps({'type': 'error', 'message': error_message})}\n\n"
+                yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+                return
+
             # Send Stage 1 completion with round history
             yield f"data: {json.dumps({'type': 'stage1_complete', 'data': stage1_responses, 'round_history': round_history})}\n\n"
 
             # Start Stage 2
             yield f"data: {json.dumps({'type': 'stage2_start'})}\n\n"
 
-            # Run Stage 2
-            stage2_rankings, label_to_model = await stage2_collect_rankings(user_message, stage1_responses)
+            # Run Stage 2 with only valid responses
+            stage2_rankings, label_to_model = await stage2_collect_rankings(user_message, valid_responses)
 
             yield f"data: {json.dumps({'type': 'stage2_complete', 'data': stage2_rankings, 'metadata': {'label_to_model': label_to_model, 'aggregate_rankings': calculate_aggregate_rankings(stage2_rankings, label_to_model)}})}\n\n"
 
             # Start Stage 3
             yield f"data: {json.dumps({'type': 'stage3_start'})}\n\n"
 
+            # Use valid responses for synthesis (Stage 3 chairman shouldn't see failures)
             stage3_synthesis = await stage3_synthesize_final(
                 user_message,
-                stage1_responses,
+                valid_responses,
                 stage2_rankings
             )
 
