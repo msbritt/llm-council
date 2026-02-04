@@ -347,6 +347,7 @@ from .iteration_types import ModelIterationRequest, ModelRoundState
 from .aggregation import aggregate_questions
 from .search import execute_search
 import asyncio
+import time
 
 
 async def execute_single_round(
@@ -361,34 +362,48 @@ async def execute_single_round(
         {
             "model_requests": {model_id: ModelIterationRequest},
             "aggregated_questions": [{"text": str, "asked_by": [ids]}],
-            "search_results": {query: results}
+            "search_results": {query: results},
+            "timing": {
+                "round_duration": float,
+                "model_timings": {model_id: float}
+            }
         }
     """
+    round_start = time.time()
+
     # Filter to only non-ready models
     active_states = [s for s in model_states if not s.is_ready]
 
     # Build prompts for each model
     async def query_model_for_iteration(state: ModelRoundState):
+        model_start = time.time()
         prompt = _build_iteration_prompt(user_query, state, round_num)
         messages = [{"role": "user", "content": prompt}]
         response = await query_model(state.model_id, messages)
+        model_duration = time.time() - model_start
 
         if response is None:
             # Graceful degradation
             return state.model_id, ModelIterationRequest(
                 status="ready",
                 response="[Model failed to respond]"
-            )
+            ), model_duration
 
         # Parse structured response
         request = _parse_iteration_response(response["content"])
-        return state.model_id, request
+        return state.model_id, request, model_duration
 
     # Query all models in parallel
     results = await asyncio.gather(
         *[query_model_for_iteration(s) for s in active_states]
     )
-    model_requests = dict(results)
+
+    # Separate timings from requests
+    model_requests = {}
+    model_timings = {}
+    for model_id, request, duration in results:
+        model_requests[model_id] = request
+        model_timings[model_id] = duration
 
     # Aggregate searches and execute
     all_searches = []
@@ -409,10 +424,24 @@ async def execute_single_round(
     }
     aggregated_questions = aggregate_questions(questions_by_model)
 
+    round_duration = time.time() - round_start
+
+    # DEBUG (keep existing debug logs)
+    print(f"[DEBUG Round {round_num}] questions_by_model: {questions_by_model}")
+    print(f"[DEBUG Round {round_num}] aggregated_questions: {aggregated_questions}")
+    print(f"[DEBUG Round {round_num}] Round duration: {round_duration:.2f}s")
+    print(f"[DEBUG Round {round_num}] Model statuses:")
+    for mid, req in model_requests.items():
+        print(f"  {mid}: status={req.status}, questions={len(req.questions)}, timing={model_timings[mid]:.2f}s")
+
     return {
         "model_requests": model_requests,
         "aggregated_questions": aggregated_questions,
-        "search_results": search_results
+        "search_results": search_results,
+        "timing": {
+            "round_duration": round_duration,
+            "model_timings": model_timings
+        }
     }
 
 
@@ -444,12 +473,14 @@ This is round {round_num}. You may request web searches or ask the user question
     prompt += """
 Respond in this JSON format:
 {
-  "status": "ready",
-  "response": "your detailed answer to the question"
+  "status": "needs_info" or "ready",
+  "searches": ["search query 1", "search query 2"],
+  "questions": ["question for user"],
+  "response": "your final answer (only if status is ready)"
 }
 
-IMPORTANT: Always set status to "ready" and provide your best answer based on the information available.
-Do NOT set status to "needs_info" or request searches/questions - just answer directly.
+If you have enough information, set status to "ready" and provide your response.
+Otherwise, set status to "needs_info" and request searches or ask questions.
 """
 
     return prompt
@@ -458,11 +489,27 @@ Do NOT set status to "needs_info" or request searches/questions - just answer di
 def _parse_iteration_response(content: str) -> ModelIterationRequest:
     """Parse model's JSON response into structured request."""
     import json
+    import re
+
+    # Strip markdown code fences if present
+    cleaned_content = content.strip()
+
+    # Remove ```json ... ``` or ``` ... ``` wrapping
+    if cleaned_content.startswith('```'):
+        # Find the first newline after opening fence
+        first_newline = cleaned_content.find('\n')
+        if first_newline != -1:
+            # Find the closing fence
+            closing_fence = cleaned_content.rfind('```')
+            if closing_fence > first_newline:
+                cleaned_content = cleaned_content[first_newline+1:closing_fence].strip()
 
     try:
-        data = json.loads(content)
+        data = json.loads(cleaned_content)
         return ModelIterationRequest(**data)
-    except (json.JSONDecodeError, ValueError):
+    except (json.JSONDecodeError, ValueError) as e:
+        print(f"[DEBUG] Failed to parse JSON: {e}")
+        print(f"[DEBUG] Content preview: {cleaned_content[:200]}")
         # Fallback: treat as ready with content as response
         return ModelIterationRequest(
             status="ready",
@@ -470,31 +517,79 @@ def _parse_iteration_response(content: str) -> ModelIterationRequest:
         )
 
 
+def serialize_model_states(states: dict[str, ModelRoundState]) -> dict[str, dict]:
+    """Serialize model states for JSON transport."""
+    return {
+        mid: {
+            "model_id": s.model_id,
+            "current_round": s.current_round,
+            "is_ready": s.is_ready,
+            "accumulated_searches": s.accumulated_searches,
+            "accumulated_questions": s.accumulated_questions,
+            "final_response": s.final_response,
+        }
+        for mid, s in states.items()
+    }
+
+
+def deserialize_model_states(data: dict[str, dict]) -> dict[str, ModelRoundState]:
+    """Deserialize model states from JSON."""
+    return {
+        mid: ModelRoundState(**state_data)
+        for mid, state_data in data.items()
+    }
+
+
+def apply_answers_to_states(
+    states: dict[str, ModelRoundState],
+    questions: list[dict],
+    answers: dict[str, str]
+):
+    """Route user answers to the models that asked them."""
+    for question in questions:
+        answer = answers.get(question["text"])
+        if answer:
+            for model_id in question["asked_by"]:
+                if model_id in states:
+                    states[model_id].accumulated_questions.append({
+                        "q": question["text"],
+                        "a": answer
+                    })
+
+
 async def run_iterative_phase(
     user_query: str,
     council_models: list[str],
     max_iterations: int = 3,
-    user_answer_callback=None
-) -> dict[str, ModelRoundState]:
+    user_answer_callback=None,
+    start_round: int = 1,
+    initial_states: dict[str, ModelRoundState] | None = None,
+) -> tuple[dict[str, ModelRoundState], list[dict] | None]:
     """
-    Run the full iterative phase across all models.
+    Run the iterative phase, pausing if questions need user answers.
 
     Args:
         user_query: The question to answer
         council_models: List of model IDs
         max_iterations: Maximum rounds per model
-        user_answer_callback: Async function(questions) -> answers dict
+        user_answer_callback: Async function(questions) -> answers dict (legacy, not used with pause-resume)
+        start_round: Which round to start from (1 for new, >1 for resume)
+        initial_states: Previous states when resuming (None for new iteration)
 
     Returns:
-        Final state for each model: {model_id: ModelRoundState}
+        (final_states, None) if complete
+        (partial_states, aggregated_questions) if paused for questions
     """
-    # Initialize states
-    states = {
-        mid: ModelRoundState(model_id=mid, current_round=0, is_ready=False)
-        for mid in council_models
-    }
+    # Initialize or restore states
+    if initial_states:
+        states = initial_states
+    else:
+        states = {
+            mid: ModelRoundState(model_id=mid, current_round=0, is_ready=False)
+            for mid in council_models
+        }
 
-    for round_num in range(1, max_iterations + 1):
+    for round_num in range(start_round, max_iterations + 1):
         # Get non-ready models
         active_models = [s for s in states.values() if not s.is_ready]
         if not active_models:
@@ -525,22 +620,28 @@ async def run_iterative_phase(
                 state.is_ready = True
                 state.final_response = request.response
 
-        # If there are questions, get user answers
-        if round_result["aggregated_questions"] and user_answer_callback:
-            user_answers = await user_answer_callback(
-                round_result["aggregated_questions"]
-            )
-
-            # Route answers to models that asked
-            for question in round_result["aggregated_questions"]:
-                answer = user_answers.get(question["text"])
-                if answer:
-                    for model_id in question["asked_by"]:
-                        if model_id in states:
-                            states[model_id].accumulated_questions.append({
-                                "q": question["text"],
-                                "a": answer
-                            })
+        # If there are questions and no callback, pause for user input
+        if round_result["aggregated_questions"]:
+            print(f"[DEBUG] Found {len(round_result['aggregated_questions'])} aggregated questions in round {round_num}")
+            if user_answer_callback:
+                # Legacy path: use callback
+                user_answers = await user_answer_callback(
+                    round_result["aggregated_questions"]
+                )
+                # Route answers to models that asked
+                for question in round_result["aggregated_questions"]:
+                    answer = user_answers.get(question["text"])
+                    if answer:
+                        for model_id in question["asked_by"]:
+                            if model_id in states:
+                                states[model_id].accumulated_questions.append({
+                                    "q": question["text"],
+                                    "a": answer
+                                })
+            else:
+                # New path: pause and return questions for frontend to handle
+                print(f"[DEBUG] PAUSING iteration - returning {len(round_result['aggregated_questions'])} questions to frontend")
+                return (states, round_result["aggregated_questions"])
 
     # Force completion for any non-ready models
     for state in states.values():
@@ -548,7 +649,7 @@ async def run_iterative_phase(
             state.is_ready = True
             state.final_response = "[No response after max iterations]"
 
-    return states
+    return (states, None)
 
 
 # ============================================================================
