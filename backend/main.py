@@ -357,7 +357,6 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     user_message = request.content
-    max_iterations = request.clarifications.get("max_iterations", DEFAULT_MAX_ITERATIONS) if request.clarifications else DEFAULT_MAX_ITERATIONS
 
     # Check if this is the first message
     is_first_message = len(conversation["messages"]) == 0
@@ -374,6 +373,12 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
 
             # Check if resuming from previous iteration
             iteration_state = request.clarifications.get("iteration_state") if request.clarifications else None
+
+            # Extract max_iterations - check iteration_state first (for resume), then top-level clarifications
+            if iteration_state:
+                max_iterations = iteration_state.get("max_iterations", DEFAULT_MAX_ITERATIONS)
+            else:
+                max_iterations = request.clarifications.get("max_iterations", DEFAULT_MAX_ITERATIONS) if request.clarifications else DEFAULT_MAX_ITERATIONS
 
             if iteration_state and iteration_state.get("user_answers"):
                 # Resume iteration with answers
