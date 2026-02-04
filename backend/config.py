@@ -32,5 +32,11 @@ ITERATION_TIMEOUT_SECONDS = 60  # Per model per round
 # OpenRouter API endpoint
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+# Retry configuration for OpenRouter API calls
+RETRY_MAX_ATTEMPTS = 3        # Total attempts (1 initial + 2 retries)
+RETRY_BASE_DELAY = 1.0        # Base delay in seconds
+RETRY_MAX_DELAY = 8.0         # Maximum delay cap in seconds
+RETRYABLE_STATUS_CODES = [429, 500, 502, 503, 504]
+
 # Data directory for conversation storage
 DATA_DIR = "data/conversations"
