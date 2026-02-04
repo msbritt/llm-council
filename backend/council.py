@@ -564,7 +564,8 @@ async def run_iterative_phase(
     user_answer_callback=None,
     start_round: int = 1,
     initial_states: dict[str, ModelRoundState] | None = None,
-) -> tuple[dict[str, ModelRoundState], list[dict] | None]:
+    previous_round_history: list[dict] | None = None,
+) -> tuple[dict[str, ModelRoundState], list[dict] | None, list[dict]]:
     """
     Run the iterative phase, pausing if questions need user answers.
 
@@ -575,10 +576,21 @@ async def run_iterative_phase(
         user_answer_callback: Async function(questions) -> answers dict (legacy, not used with pause-resume)
         start_round: Which round to start from (1 for new, >1 for resume)
         initial_states: Previous states when resuming (None for new iteration)
+        previous_round_history: Previous round history when resuming (None for new iteration)
 
     Returns:
-        (final_states, None) if complete
-        (partial_states, aggregated_questions) if paused for questions
+        (final_states, None, round_history) if complete
+        (partial_states, aggregated_questions, round_history) if paused for questions
+
+        round_history: [
+            {
+                "roundNum": int,
+                "duration": float,
+                "modelStatuses": {model_id: {"status": str, "timing": float}},
+                "questions": [...],
+                "userAnswers": {...}  # Empty if paused, filled if resumed
+            }
+        ]
     """
     # Initialize or restore states
     if initial_states:
@@ -588,6 +600,8 @@ async def run_iterative_phase(
             mid: ModelRoundState(model_id=mid, current_round=0, is_ready=False)
             for mid in council_models
         }
+
+    round_history = previous_round_history or []
 
     for round_num in range(start_round, max_iterations + 1):
         # Get non-ready models
@@ -601,6 +615,30 @@ async def run_iterative_phase(
             list(states.values()),
             round_num
         )
+
+        # Build model statuses for this round (include ALL models, not just active)
+        model_statuses = {}
+        for model_id, state in states.items():
+            if model_id in round_result["model_requests"]:
+                # Model participated in this round
+                request = round_result["model_requests"][model_id]
+                model_statuses[model_id] = {
+                    "status": request.status,
+                    "timing": round_result["timing"]["model_timings"].get(model_id, 0)
+                }
+            elif state.is_ready:
+                # Model was already ready from previous round
+                model_statuses[model_id] = {
+                    "status": "ready",
+                    "timing": 0,
+                    "note": "completed_earlier"
+                }
+            else:
+                # Model should have participated but didn't (edge case)
+                model_statuses[model_id] = {
+                    "status": "unknown",
+                    "timing": 0
+                }
 
         # Update states with results
         for model_id, request in round_result["model_requests"].items():
@@ -638,10 +676,38 @@ async def run_iterative_phase(
                                     "q": question["text"],
                                     "a": answer
                                 })
+
+                # Record round with answers
+                round_history.append({
+                    "roundNum": round_num,
+                    "duration": round_result["timing"]["round_duration"],
+                    "modelStatuses": model_statuses,
+                    "questions": round_result["aggregated_questions"],
+                    "userAnswers": user_answers
+                })
             else:
                 # New path: pause and return questions for frontend to handle
                 print(f"[DEBUG] PAUSING iteration - returning {len(round_result['aggregated_questions'])} questions to frontend")
-                return (states, round_result["aggregated_questions"])
+
+                # Record round without answers yet
+                round_history.append({
+                    "roundNum": round_num,
+                    "duration": round_result["timing"]["round_duration"],
+                    "modelStatuses": model_statuses,
+                    "questions": round_result["aggregated_questions"],
+                    "userAnswers": {}  # Will be filled when resumed
+                })
+
+                return (states, round_result["aggregated_questions"], round_history)
+        else:
+            # No questions, record round as complete
+            round_history.append({
+                "roundNum": round_num,
+                "duration": round_result["timing"]["round_duration"],
+                "modelStatuses": model_statuses,
+                "questions": [],
+                "userAnswers": {}
+            })
 
     # Force completion for any non-ready models
     for state in states.values():
@@ -649,7 +715,7 @@ async def run_iterative_phase(
             state.is_ready = True
             state.final_response = "[No response after max iterations]"
 
-    return (states, None)
+    return (states, None, round_history)
 
 
 # ============================================================================

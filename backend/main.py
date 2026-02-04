@@ -348,7 +348,7 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
     Send a message with SSE progress updates during iteration phase.
     """
     from fastapi.responses import StreamingResponse
-    from .council import run_iterative_phase, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings
+    from .council import run_iterative_phase, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings, serialize_model_states, deserialize_model_states, apply_answers_to_states
     from .config import DEFAULT_MAX_ITERATIONS
 
     # Check if conversation exists
@@ -372,19 +372,67 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
             if is_first_message:
                 title_task = asyncio.create_task(generate_conversation_title(user_message))
 
-            # For now, use None callback (no user interaction during iteration)
-            # Future enhancement: implement proper bidirectional communication
-            answer_callback = None
+            # Check if resuming from previous iteration
+            iteration_state = request.clarifications.get("iteration_state") if request.clarifications else None
+
+            if iteration_state and iteration_state.get("user_answers"):
+                # Resume iteration with answers
+                initial_states = deserialize_model_states(iteration_state["model_states"])
+                previous_round_history = iteration_state.get("round_history", [])
+
+                # Update the last round with user answers
+                if previous_round_history:
+                    previous_round_history[-1]["userAnswers"] = iteration_state["user_answers"]
+
+                # Derive start_round from round_history (more reliable than round_num field)
+                start_round = (previous_round_history[-1]["roundNum"] + 1) if previous_round_history else 1
+
+                # Apply answers to model states
+                apply_answers_to_states(
+                    initial_states,
+                    iteration_state["pending_questions"],
+                    iteration_state["user_answers"]
+                )
+            else:
+                # Start new iteration
+                initial_states = None
+                start_round = 1
+                previous_round_history = None
 
             # Start iteration phase
             yield f"event: phase_start\ndata: {json.dumps({'type': 'phase_start', 'phase': 'iteration'})}\n\n"
 
-            final_states = await run_iterative_phase(
+            final_states, pending_questions, round_history = await run_iterative_phase(
                 user_message,
                 COUNCIL_MODELS,
                 max_iterations,
-                answer_callback
+                user_answer_callback=None,
+                start_round=start_round,
+                initial_states=initial_states,
+                previous_round_history=previous_round_history
             )
+
+            # If there are pending questions, pause for user input
+            if pending_questions:
+                print(f"[DEBUG] Sending questions_needed event with {len(pending_questions)} questions")
+                # Send questions_needed event with full state for resume
+                event_data = {
+                    'type': 'questions_needed',
+                    'questions': pending_questions,
+                    'round_history': round_history,
+                    'iteration_state': {
+                        'user_query': user_message,
+                        'round_num': round_history[-1]["roundNum"] if round_history else start_round,
+                        'max_iterations': max_iterations,
+                        'model_states': serialize_model_states(final_states),
+                        'pending_questions': pending_questions,
+                        'round_history': round_history,
+                    }
+                }
+                print(f"[DEBUG] Event data keys: {event_data.keys()}")
+                yield f"event: questions_needed\ndata: {json.dumps(event_data)}\n\n"
+                print(f"[DEBUG] Returned from event_generator - stream should end here")
+                return  # End stream, wait for resubmit with answers
 
             # Prepare responses for Stage 1 (iteration results)
             stage1_responses = [
@@ -395,8 +443,15 @@ async def send_message_with_iteration(conversation_id: str, request: SendMessage
                 for mid, state in final_states.items()
             ]
 
-            # Send Stage 1 completion
-            yield f"data: {json.dumps({'type': 'stage1_complete', 'data': stage1_responses})}\n\n"
+            # DEBUG: Log what we're sending
+            print(f"[DEBUG] final_states has {len(final_states)} models")
+            print(f"[DEBUG] stage1_responses has {len(stage1_responses)} entries")
+            print(f"[DEBUG] round_history has {len(round_history)} rounds")
+            for resp in stage1_responses:
+                print(f"[DEBUG] Model: {resp['model']}, Response preview: {resp['response'][:100] if resp['response'] else 'None'}...")
+
+            # Send Stage 1 completion with round history
+            yield f"data: {json.dumps({'type': 'stage1_complete', 'data': stage1_responses, 'round_history': round_history})}\n\n"
 
             # Start Stage 2
             yield f"data: {json.dumps({'type': 'stage2_start'})}\n\n"
