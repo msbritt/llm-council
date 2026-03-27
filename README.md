@@ -18,18 +18,16 @@ This project was 99% vibe coded as a fun Saturday hack because I wanted to explo
 
 ### 1. Install Dependencies
 
-The project uses [uv](https://docs.astral.sh/uv/) for project management.
+Run the install script (requires [uv](https://docs.astral.sh/uv/) and [Node.js](https://nodejs.org)):
 
-**Backend:**
 ```bash
-uv sync
+./install.sh
 ```
 
-**Frontend:**
+This installs Python dependencies via `uv sync` and frontend dependencies via `npm install`. If you don't have `uv`, install it first:
+
 ```bash
-cd frontend
-npm install
-cd ..
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 ### 2. Configure API Key
