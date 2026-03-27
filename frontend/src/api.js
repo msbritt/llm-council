@@ -176,6 +176,7 @@ export const api = {
         }
 
         if (eventData) {
+          console.log(`[SSE Raw ${new Date().toISOString()}]`, eventType, eventData);  // DEBUG
           try {
             const data = JSON.parse(eventData);
             onEvent(data.type, data);
