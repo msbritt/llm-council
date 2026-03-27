@@ -26,3 +26,12 @@ class RoundAggregation(BaseModel):
     search_queries: list[str]
     user_questions: list[dict]  # [{"text": str, "asked_by": [model_ids]}]
     search_results: dict[str, str]  # query -> results
+
+
+class IterationState(BaseModel):
+    """Serializable state for pausing/resuming iteration."""
+    user_query: str
+    round_num: int
+    max_iterations: int
+    model_states: dict[str, dict]  # Serialized ModelRoundState
+    pending_questions: list[dict]  # [{"text": str, "asked_by": [model_ids]}]
